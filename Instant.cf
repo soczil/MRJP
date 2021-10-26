@@ -1,5 +1,5 @@
 Prog. Program ::= [Stmt] ;
-SAss. Stmt ::= Ident "=" Exp ;
+SAss. Stmt ::= Ident "=" Exp;
 SExp. Stmt ::= Exp ;
 separator Stmt ";" ;
 
