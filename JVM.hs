@@ -1,7 +1,7 @@
 module Main where
 
 import System.IO (readFile)
-import System.Environment (getArgs)
+import System.Environment (getArgs, getProgName)
 
 import Control.Monad.State
 
@@ -15,22 +15,40 @@ type JVMState = (M.Map Ident Int, Int)
 type JVMMonad = State JVMState
 
 constIdx = [0, 1, 2, 3, 4, 5]
+varIdx = [0, 1, 2, 3]
 
 emptyState :: JVMState
 emptyState = (M.empty, 1)
 
+compileArithmeticExp :: Exp -> Exp -> String -> JVMMonad String
+compileArithmeticExp e1 e2 opCode = do
+    result1 <- compileExp e1
+    result2 <- compileExp e2
+    return $ result1 ++ result2 ++ opCode ++ "\n"
+
 compileExp :: Exp -> JVMMonad String
-compileExp (ExpAdd e1 e2) = undefined
-compileExp (ExpSub e1 e2) = undefined
-compileExp (ExpMul e1 e2) = undefined
-compileExp (ExpDiv e1 e2) = undefined
-compileExp (ExpLit n) = return $ "iconst" ++ gap ++ show n ++ "\n"
-    where gap = if n `elem` constIdx then "_" else " "
-compileExp (ExpVar id) = undefined
+compileExp (ExpAdd e1 e2) = compileArithmeticExp e2 e1 "iadd"
+compileExp (ExpSub e1 e2) = compileArithmeticExp e1 e2 "isub"
+compileExp (ExpMul e1 e2) = compileArithmeticExp e1 e2 "imul"
+compileExp (ExpDiv e1 e2) = compileArithmeticExp e1 e2 "idiv"
+compileExp (ExpLit n) = return $ instr ++ show n ++ "\n"
+    where instr = if n `elem` constIdx then "iconst_" else "bipush "
+compileExp (ExpVar id) = do
+    (vars, _) <- get
+    let varNum = vars M.! id
+    let gap = if varNum `elem` varIdx then "_" else " " 
+    return $ "iload" ++ gap ++ show varNum ++ "\n"
 
 compileStmt :: Stmt -> JVMMonad String
-compileStmt (SAss id e) = undefined
-compileStmt (SExp e) = compileExp e
+compileStmt (SAss id e) = do
+    (vars, counter) <- get
+    put (M.insert id counter vars, counter + 1)
+    result <- compileExp e
+    let gap = if counter `elem` varIdx then "_" else " "
+    return $ result ++ "istore" ++ gap ++ show counter ++ "\n"
+compileStmt (SExp e) = do
+    result <- compileExp e
+    return $ result ++ "invokevirtual java/io/PrintStream/println(I)V\n"
 
 compileProgram :: [Stmt] -> JVMMonad String
 compileProgram [] = return ""
@@ -42,7 +60,23 @@ compileProgram (x:xs) = do
 compile :: Program -> IO String
 compile (Prog stmts) = do
     let (compiledCode, _) = runState (compileProgram stmts) emptyState
-    return compiledCode
+    fillCode compiledCode <$> getProgName
+
+fillCode :: String -> String -> String
+fillCode code progName = 
+    ".class public " ++ progName ++ "\n"
+    ++ ".super  java/lang/Object\n"
+    ++ ".method public <init>()V\n"
+    ++ "aload_0\n"
+    ++ "invokespecial java/lang/Object/<init>()V\n"
+    ++ "return\n"
+    ++ ".end method\n"
+    ++ ".method public static main([Ljava/lang/String;)V\n"
+    ++ ".limit stack 1000\n" -- FIXME!!!!!!!!!!!!!!!!
+    ++ "getstatic java/lang/System/out Ljava/io/PrintStream;\n"
+    ++ code
+    ++ "return\n"
+    ++ ".end method\n"
 
 parseAndCompile :: String -> IO ()
 parseAndCompile instantProgram = do
