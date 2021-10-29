@@ -32,7 +32,10 @@ compileExp (ExpSub e1 e2) = compileArithmeticExp e1 e2 "isub"
 compileExp (ExpMul e1 e2) = compileArithmeticExp e1 e2 "imul"
 compileExp (ExpDiv e1 e2) = compileArithmeticExp e1 e2 "idiv"
 compileExp (ExpLit n) = return $ instr ++ show n ++ "\n"
-    where instr = if n `elem` constIdx then "iconst_" else "bipush "
+    where instr
+            | n `elem` constIdx = "iconst_"
+            | n > 127 = "ldc "
+            | otherwise = "bipush "
 compileExp (ExpVar id) = do
     (vars, _) <- get
     let varNum = vars M.! id
@@ -40,7 +43,7 @@ compileExp (ExpVar id) = do
     return $ "iload" ++ gap ++ show varNum ++ "\n"
 
 compileStmt :: Stmt -> JVMMonad String
-compileStmt (SAss id e) = do
+compileStmt (SAss id e) = do -- FIXME!!!!!!!!!!!!!
     (vars, counter) <- get
     put (M.insert id counter vars, counter + 1)
     result <- compileExp e
@@ -63,8 +66,7 @@ compile (Prog stmts) = do
     fillCode compiledCode <$> getProgName
 
 fillCode :: String -> String -> String
-fillCode code progName = 
-    ".class public " ++ progName ++ "\n"
+fillCode code progName = ".class public " ++ progName ++ "\n"
     ++ ".super  java/lang/Object\n"
     ++ ".method public <init>()V\n"
     ++ "aload_0\n"
@@ -72,6 +74,7 @@ fillCode code progName =
     ++ "return\n"
     ++ ".end method\n"
     ++ ".method public static main([Ljava/lang/String;)V\n"
+    ++ ".limit locals 1000\n" -- FIXME!!!!!!!!!!!!!!!!
     ++ ".limit stack 1000\n" -- FIXME!!!!!!!!!!!!!!!!
     ++ "getstatic java/lang/System/out Ljava/io/PrintStream;\n"
     ++ code
