@@ -5,6 +5,7 @@ import System.Environment (getArgs, getProgName)
 
 import Control.Monad.State
 
+import Data.Maybe (fromMaybe)
 import qualified Data.Map as M
 
 import Instant.Par
@@ -43,15 +44,18 @@ compileExp (ExpVar id) = do
     return $ "iload" ++ gap ++ show varNum ++ "\n"
 
 compileStmt :: Stmt -> JVMMonad String
-compileStmt (SAss id e) = do -- FIXME!!!!!!!!!!!!!
+compileStmt (SAss id e) = do
     (vars, counter) <- get
-    put (M.insert id counter vars, counter + 1)
+    let idx = fromMaybe counter $ M.lookup id vars
+    when (idx == counter) $ put (M.insert id counter vars, counter + 1)
     result <- compileExp e
-    let gap = if counter `elem` varIdx then "_" else " "
-    return $ result ++ "istore" ++ gap ++ show counter ++ "\n"
+    let gap = if idx `elem` varIdx then "_" else " "
+    return $ result ++ "istore" ++ gap ++ show idx ++ "\n"
 compileStmt (SExp e) = do
     result <- compileExp e
-    return $ result ++ "invokevirtual java/io/PrintStream/println(I)V\n"
+    return $ "getstatic java/lang/System/out Ljava/io/PrintStream;\n" -- FIXME!!!
+            ++ result 
+            ++ "invokevirtual java/io/PrintStream/println(I)V\n"
 
 compileProgram :: [Stmt] -> JVMMonad String
 compileProgram [] = return ""
@@ -63,7 +67,7 @@ compileProgram (x:xs) = do
 compile :: Program -> IO String
 compile (Prog stmts) = do
     let (compiledCode, _) = runState (compileProgram stmts) emptyState
-    fillCode compiledCode <$> getProgName
+    fillCode compiledCode <$> getProgName -- FIXME!!!!!!!!!!!!!
 
 fillCode :: String -> String -> String
 fillCode code progName = ".class public " ++ progName ++ "\n"
@@ -76,7 +80,6 @@ fillCode code progName = ".class public " ++ progName ++ "\n"
     ++ ".method public static main([Ljava/lang/String;)V\n"
     ++ ".limit locals 1000\n" -- FIXME!!!!!!!!!!!!!!!!
     ++ ".limit stack 1000\n" -- FIXME!!!!!!!!!!!!!!!!
-    ++ "getstatic java/lang/System/out Ljava/io/PrintStream;\n"
     ++ code
     ++ "return\n"
     ++ ".end method\n"

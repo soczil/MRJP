@@ -4,3 +4,5 @@ Instant
 *.o
 *.hi
 testy
+*.j
+*.class
