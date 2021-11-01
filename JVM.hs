@@ -12,14 +12,42 @@ import Instant.Par
 import Instant.ErrM
 import Instant.Abs
 
+type StackInfo = (Int, Int)
 type JVMState = (M.Map Ident Int, Int)
 type JVMMonad = State JVMState
 
-constIdx = [0, 1, 2, 3, 4, 5]
-varIdx = [0, 1, 2, 3]
+constIdx = [0, 1, 2, 3, 4, 5] -- FIXME!!!!!!!!!!
+varIdx = [0, 1, 2, 3] -- FIXME!!!!!!!!!!!!!!!!!
 
 emptyState :: JVMState
 emptyState = (M.empty, 1)
+
+getArithmeticExpStackSize :: Exp -> Exp -> StackInfo -> StackInfo
+getArithmeticExpStackSize e1 e2 (current, maximal) = do
+    let (current1, maximal1) = getExpStackSize e1 (current, maximal)
+    let newMax = max maximal maximal1
+    let (current2, maximal2) = getExpStackSize e2 (current1, newMax)
+    (current2 - 1, max newMax maximal2)
+
+getConstExpStackSize :: StackInfo -> StackInfo
+getConstExpStackSize (current, maximal) = do
+    let newStackSize = current + 1
+    (newStackSize, max newStackSize maximal)
+
+getExpStackSize :: Exp -> StackInfo -> StackInfo
+-- getExpStackSize (ExpAdd e1 e2) = undefined
+-- getExpStackSize (ExpSub e1 e2) = undefined
+-- getExpStackSize (ExpMul e1 e2) = undefined
+-- getExpStackSize (ExpDiv e1 e2) = undefined
+getExpStackSize (ExpLit _) = getConstExpStackSize
+getExpStackSize (ExpVar _) = getConstExpStackSize
+
+getStmtStackSize :: Stmt -> (Int, Int) -> (Int, Int)
+getStmtStackSize (SAss _ e) = getExpStackSize e
+getStmtStackSize (SExp e) = getExpStackSize e
+
+getStackLimit :: [Stmt] -> Int
+getStackLimit = undefined
 
 compileArithmeticExp :: Exp -> Exp -> String -> JVMMonad String
 compileArithmeticExp e1 e2 opCode = do
