@@ -135,5 +135,5 @@ main :: IO ()
 main = do
     args <- getArgs
     case args of
-        [] -> hPutStrLn stderr "Error: Enter the path to the input file"
+        [] -> hPutStrLn stderr "Error: enter the path to the input file"
         (file:_) -> runCompiler file
