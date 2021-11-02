@@ -2,6 +2,7 @@ module Main where
 
 import System.IO (readFile)
 import System.Environment (getArgs, getProgName)
+import System.FilePath
 
 import Control.Monad.State
 
@@ -16,18 +17,15 @@ type StackInfo = (Int, Int)
 type JVMState = (M.Map Ident Int, Int)
 type JVMMonad = State JVMState
 
-constIdx = [0, 1, 2, 3, 4, 5] -- FIXME!!!!!!!!!!
-varIdx = [0, 1, 2, 3] -- FIXME!!!!!!!!!!!!!!!!!
-
 emptyState :: JVMState
-emptyState = (M.empty, 1)
+emptyState = (M.empty, 1) -- FIXME???????
 
-getArithmeticExpStackSize :: Exp -> Exp -> StackInfo -> StackInfo -- FIXME (names)!!!!!!!!!!!
-getArithmeticExpStackSize e1 e2 (current, maximal) = do
-    let (current1, maximal1) = getExpStackSize e1 (current, maximal)
-    let newMax = max maximal maximal1
-    let (current2, maximal2) = getExpStackSize e2 (current1, newMax)
-    (current2 - 1, max newMax maximal2)
+getArithmeticExpStackSize :: Exp -> Exp -> StackInfo -> StackInfo
+getArithmeticExpStackSize e1 e2 (current, maxSize) = do
+    let (current1, maxSize1) = getExpStackSize e1 (current, maxSize)
+    let newMaxSize = max maxSize maxSize1
+    let (current2, maxSize2) = getExpStackSize e2 (current1, newMaxSize)
+    (current2 - 1, max newMaxSize maxSize2)
 
 getConstExpStackSize :: StackInfo -> StackInfo
 getConstExpStackSize (current, maximal) = do
@@ -47,7 +45,8 @@ getStmtStackSize (SAss _ e) = getExpStackSize e (0, 0)
 getStmtStackSize (SExp e) = getExpStackSize e (0, 2)
 
 getStackLimit :: [Stmt] -> Int
-getStackLimit stmts = maximum (foldl (\acc (_, maxSize) -> acc ++ [maxSize]) [] (map getStmtStackSize stmts))
+getStackLimit stmts = 
+    maximum (foldl (\acc (_, maxSize) -> acc ++ [maxSize]) [] (map getStmtStackSize stmts))
 
 compileArithmeticExp :: Exp -> Exp -> String -> JVMMonad String
 compileArithmeticExp e1 e2 opCode = do
@@ -62,13 +61,14 @@ compileExp (ExpMul e1 e2) = compileArithmeticExp e1 e2 "imul"
 compileExp (ExpDiv e1 e2) = compileArithmeticExp e1 e2 "idiv"
 compileExp (ExpLit n) = return $ instr ++ show n ++ "\n"
     where instr
-            | n `elem` constIdx = "iconst_"
-            | n > 127 = "ldc "
-            | otherwise = "bipush "
+            | n <= 5 = "iconst_"
+            | n <= 127 = "bipush "
+            | n <= 32767 = "sipush "
+            | otherwise = "ldc "
 compileExp (ExpVar id) = do
     (vars, _) <- get
     let varNum = vars M.! id
-    let gap = if varNum `elem` varIdx then "_" else " " 
+    let gap = if varNum <= 3 then "_" else " " 
     return $ "iload" ++ gap ++ show varNum ++ "\n"
 
 compileStmt :: Stmt -> JVMMonad String
@@ -77,7 +77,7 @@ compileStmt (SAss id e) = do
     let idx = fromMaybe counter $ M.lookup id vars
     when (idx == counter) $ put (M.insert id counter vars, counter + 1)
     result <- compileExp e
-    let gap = if idx `elem` varIdx then "_" else " "
+    let gap = if idx <= 3 then "_" else " "
     return $ result ++ "istore" ++ gap ++ show idx ++ "\n"
 compileStmt (SExp e) = do
     result <- compileExp e
@@ -98,10 +98,10 @@ compile (Prog stmts) = do
     let stackLimit = getStackLimit stmts
     let (compiledCode, (vars, _)) = runState (compileProgram stmts) emptyState
     let localsLimit = M.size vars + 1
-    fillCode compiledCode localsLimit stackLimit <$> getProgName -- FIXME!!!!!!!!!!!!!
+    completeCode compiledCode localsLimit stackLimit <$> getProgName -- FIXME!!!!!!!!!!!!!
 
-fillCode :: String -> Int -> Int -> String -> String -- FIXME (name)!!!!!!!!!!!
-fillCode code localsLimit stackLimit progName = 
+completeCode :: String -> Int -> Int -> String -> String
+completeCode code localsLimit stackLimit progName = 
     ".class public " ++ progName ++ "\n"
     ++ ".super  java/lang/Object\n"
     ++ ".method public <init>()V\n"
@@ -123,13 +123,13 @@ parseAndCompile instantProgram = do
             result <- compile prog
             putStr result
             return ()
-        Bad msg -> putStrLn msg
+        Bad msg -> putStrLn msg -- FIXME!!!!!!!!!!!!!!!!!!!
 
 main :: IO ()
 main = do
     args <- getArgs
     case args of
-        [] -> putStrLn "No path to file"
-        (x:_) -> do
-            instantProgram <- readFile x
+        [] -> putStrLn "No path to file" -- FIXME!!!!!!!!!!!!!!!!!
+        (file:_) -> do
+            instantProgram <- readFile file
             parseAndCompile instantProgram
