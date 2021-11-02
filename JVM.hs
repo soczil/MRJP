@@ -22,7 +22,7 @@ varIdx = [0, 1, 2, 3] -- FIXME!!!!!!!!!!!!!!!!!
 emptyState :: JVMState
 emptyState = (M.empty, 1)
 
-getArithmeticExpStackSize :: Exp -> Exp -> StackInfo -> StackInfo
+getArithmeticExpStackSize :: Exp -> Exp -> StackInfo -> StackInfo -- FIXME (names)!!!!!!!!!!!
 getArithmeticExpStackSize e1 e2 (current, maximal) = do
     let (current1, maximal1) = getExpStackSize e1 (current, maximal)
     let newMax = max maximal maximal1
@@ -35,19 +35,19 @@ getConstExpStackSize (current, maximal) = do
     (newStackSize, max newStackSize maximal)
 
 getExpStackSize :: Exp -> StackInfo -> StackInfo
--- getExpStackSize (ExpAdd e1 e2) = undefined
--- getExpStackSize (ExpSub e1 e2) = undefined
--- getExpStackSize (ExpMul e1 e2) = undefined
--- getExpStackSize (ExpDiv e1 e2) = undefined
+getExpStackSize (ExpAdd e1 e2) = getArithmeticExpStackSize e2 e1
+getExpStackSize (ExpSub e1 e2) = getArithmeticExpStackSize e1 e2
+getExpStackSize (ExpMul e1 e2) = getArithmeticExpStackSize e1 e2
+getExpStackSize (ExpDiv e1 e2) = getArithmeticExpStackSize e1 e2
 getExpStackSize (ExpLit _) = getConstExpStackSize
 getExpStackSize (ExpVar _) = getConstExpStackSize
 
-getStmtStackSize :: Stmt -> (Int, Int) -> (Int, Int)
-getStmtStackSize (SAss _ e) = getExpStackSize e
-getStmtStackSize (SExp e) = getExpStackSize e
+getStmtStackSize :: Stmt -> StackInfo
+getStmtStackSize (SAss _ e) = getExpStackSize e (0, 0)
+getStmtStackSize (SExp e) = getExpStackSize e (0, 2)
 
 getStackLimit :: [Stmt] -> Int
-getStackLimit = undefined
+getStackLimit stmts = maximum (foldl (\acc (_, maxSize) -> acc ++ [maxSize]) [] (map getStmtStackSize stmts))
 
 compileArithmeticExp :: Exp -> Exp -> String -> JVMMonad String
 compileArithmeticExp e1 e2 opCode = do
@@ -81,8 +81,9 @@ compileStmt (SAss id e) = do
     return $ result ++ "istore" ++ gap ++ show idx ++ "\n"
 compileStmt (SExp e) = do
     result <- compileExp e
-    return $ "getstatic java/lang/System/out Ljava/io/PrintStream;\n" -- FIXME!!!
-            ++ result 
+    return $ result
+            ++ "getstatic java/lang/System/out Ljava/io/PrintStream;\n"
+            ++ "swap\n" 
             ++ "invokevirtual java/io/PrintStream/println(I)V\n"
 
 compileProgram :: [Stmt] -> JVMMonad String
@@ -94,11 +95,14 @@ compileProgram (x:xs) = do
 
 compile :: Program -> IO String
 compile (Prog stmts) = do
-    let (compiledCode, _) = runState (compileProgram stmts) emptyState
-    fillCode compiledCode <$> getProgName -- FIXME!!!!!!!!!!!!!
+    let stackLimit = getStackLimit stmts
+    let (compiledCode, (vars, _)) = runState (compileProgram stmts) emptyState
+    let localsLimit = M.size vars + 1
+    fillCode compiledCode localsLimit stackLimit <$> getProgName -- FIXME!!!!!!!!!!!!!
 
-fillCode :: String -> String -> String
-fillCode code progName = ".class public " ++ progName ++ "\n"
+fillCode :: String -> Int -> Int -> String -> String -- FIXME (name)!!!!!!!!!!!
+fillCode code localsLimit stackLimit progName = 
+    ".class public " ++ progName ++ "\n"
     ++ ".super  java/lang/Object\n"
     ++ ".method public <init>()V\n"
     ++ "aload_0\n"
@@ -106,8 +110,8 @@ fillCode code progName = ".class public " ++ progName ++ "\n"
     ++ "return\n"
     ++ ".end method\n"
     ++ ".method public static main([Ljava/lang/String;)V\n"
-    ++ ".limit locals 1000\n" -- FIXME!!!!!!!!!!!!!!!!
-    ++ ".limit stack 1000\n" -- FIXME!!!!!!!!!!!!!!!!
+    ++ ".limit locals " ++ show localsLimit ++ "\n"
+    ++ ".limit stack " ++ show stackLimit ++ "\n"
     ++ code
     ++ "return\n"
     ++ ".end method\n"
