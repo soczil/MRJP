@@ -1,6 +1,6 @@
 module JVM where
 
-import System.IO (readFile, writeFile)
+import System.IO (readFile, writeFile, hPutStrLn, stderr)
 import System.Environment (getArgs)
 import System.FilePath (dropExtension, takeBaseName, takeDirectory)
 import System.Process (runCommand)
@@ -129,11 +129,11 @@ runCompiler filePath = do
                         ++ takeDirectory filePath 
                         ++ " " ++ jasminFilePath
             return ()
-        Bad msg -> putStrLn msg -- FIXME!!!!!!!!!!!!!!!!!!!
+        Bad msg -> hPutStrLn stderr $ "Error: " ++ msg
 
 main :: IO ()
 main = do
     args <- getArgs
     case args of
-        [] -> putStrLn "No path to file" -- FIXME!!!!!!!!!!!!!!!!!
+        [] -> hPutStrLn stderr "Error: Enter the path to the input file"
         (file:_) -> runCompiler file
