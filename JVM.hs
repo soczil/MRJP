@@ -1,8 +1,9 @@
-module Main where
+module JVM where
 
-import System.IO (readFile)
-import System.Environment (getArgs, getProgName)
-import System.FilePath
+import System.IO (readFile, writeFile)
+import System.Environment (getArgs)
+import System.FilePath (dropExtension, takeBaseName, takeDirectory)
+import System.Process (runCommand)
 
 import Control.Monad.State
 
@@ -93,12 +94,12 @@ compileProgram (x:xs) = do
     result2 <- compileProgram xs
     return $ result1 ++ result2
 
-compile :: Program -> IO String
-compile (Prog stmts) = do
+compile :: Program -> String -> IO String
+compile (Prog stmts) className = do
     let stackLimit = getStackLimit stmts
     let (compiledCode, (vars, _)) = runState (compileProgram stmts) emptyState
     let localsLimit = M.size vars + 1
-    completeCode compiledCode localsLimit stackLimit <$> getProgName -- FIXME!!!!!!!!!!!!!
+    return $ completeCode compiledCode localsLimit stackLimit className
 
 completeCode :: String -> Int -> Int -> String -> String
 completeCode code localsLimit stackLimit progName = 
@@ -116,12 +117,17 @@ completeCode code localsLimit stackLimit progName =
     ++ "return\n"
     ++ ".end method\n"
 
-parseAndCompile :: String -> IO ()
-parseAndCompile instantProgram = do
+runCompiler :: String -> IO ()
+runCompiler filePath = do
+    instantProgram <- readFile filePath
     case pProgram (myLexer instantProgram) of
         Ok prog -> do
-            result <- compile prog
-            putStr result
+            result <- compile prog $ takeBaseName filePath
+            let jasminFilePath = dropExtension filePath ++ ".j"
+            writeFile jasminFilePath result
+            runCommand $ "java -jar jasmin.jar -d " 
+                        ++ takeDirectory filePath 
+                        ++ " " ++ jasminFilePath
             return ()
         Bad msg -> putStrLn msg -- FIXME!!!!!!!!!!!!!!!!!!!
 
@@ -130,6 +136,4 @@ main = do
     args <- getArgs
     case args of
         [] -> putStrLn "No path to file" -- FIXME!!!!!!!!!!!!!!!!!
-        (file:_) -> do
-            instantProgram <- readFile file
-            parseAndCompile instantProgram
+        (file:_) -> runCompiler file
