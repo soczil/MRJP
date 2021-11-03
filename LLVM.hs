@@ -2,6 +2,9 @@ module LLVM where
 
 import System.IO (readFile, writeFile, hPutStrLn, stderr)
 import System.Environment (getArgs)
+import System.FilePath (dropExtension, takeDirectory)
+import System.Process (system)
+import System.Exit (ExitCode(ExitSuccess))
 
 import Control.Monad.State
 
@@ -61,9 +64,13 @@ compileExp (ExpVar id) = do
 compileStmt :: Stmt -> LLVMMonad String
 compileStmt (SAss id e) = do
     (vars, counter) <- get
-    put (S.insert id vars, counter)
     (result, spot) <- compileExp e
-    return $ result ++ allocInstr id ++ storeInstr spot id
+    when (S.notMember id vars) $ do
+        put (S.insert id vars, counter)
+    let resultWithAlloc = if S.notMember id vars -- FIXME!!!!!!!!
+            then result ++ allocInstr id
+            else result
+    return $ resultWithAlloc ++ storeInstr spot id
 compileStmt (SExp e) = do
     (result, spot) <- compileExp e
     return $ result ++ printInstr spot
@@ -92,7 +99,16 @@ runCompiler filePath = do
     case pProgram (myLexer instantProgram) of
         Ok prog -> do
             result <- compile prog
-            putStr result
+            let llFilePath = dropExtension filePath ++ ".ll"
+            let bcFilePath = dropExtension filePath ++ ".bc"
+            let tempFilePath = takeDirectory filePath ++ "/temp.bc"
+            writeFile llFilePath result
+            ExitSuccess <- system $ 
+                "llvm-as " ++ llFilePath ++ " -o " ++ tempFilePath
+            ExitSuccess <- system $ 
+                "llvm-link " ++ tempFilePath ++ " runtime.bc -o " ++ bcFilePath
+            ExitSuccess <- system $ "rm -f " ++ tempFilePath
+            return ()
         Bad msg -> hPutStrLn stderr $ "Error: " ++ msg
 
 main :: IO ()
@@ -101,4 +117,3 @@ main = do
     case args of
         [] -> hPutStrLn stderr "Error: enter the path to the input file"
         (file:_) -> runCompiler file
-

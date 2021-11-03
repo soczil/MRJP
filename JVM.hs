@@ -125,7 +125,7 @@ runCompiler filePath = do
             result <- compile prog $ takeBaseName filePath
             let jasminFilePath = dropExtension filePath ++ ".j"
             writeFile jasminFilePath result
-            runCommand $ "java -jar jasmin.jar -d " 
+            runCommand $ "java -jar jasmin.jar -d " -- FIXME!!!!!!!!!
                         ++ takeDirectory filePath 
                         ++ " " ++ jasminFilePath
             return ()
