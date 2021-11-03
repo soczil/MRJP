@@ -19,12 +19,16 @@ parser.add_argument(
     dest='dir'
 )
 parser.add_argument(
-    '-c',
     '--clean',
-    type=bool,
-    default=True,
-    dest='clean'
+    dest='clean',
+    action='store_true'
 )
+parser.add_argument(
+    '--no-clean',
+    dest='clean',
+    action='store_false'
+)
+parser.set_defaults(clean=True)
 
 args = parser.parse_args()
 
@@ -56,7 +60,7 @@ for file in input_files:
     output_file = file[:-4] + '.output'
     f = open(test_file, 'w')
     if args.machine.lower() == 'jvm':
-        subprocess.run(['java', file[:-4] + '.class'], stdout=f)
+        subprocess.run(['java', file[:-4]], stdout=f)
     else:
         subprocess.run(['lli', file[:-4] + '.bc'], stdout=f)
     f.close()

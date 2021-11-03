@@ -8,3 +8,5 @@ testy
 *.class
 *.ll
 *.bc
+insc_jvm
+insc_llvm

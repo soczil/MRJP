@@ -3,7 +3,8 @@ module JVM where
 import System.IO (readFile, writeFile, hPutStrLn, stderr)
 import System.Environment (getArgs)
 import System.FilePath (dropExtension, takeBaseName, takeDirectory)
-import System.Process (runCommand)
+import System.Process (system)
+import System.Exit (ExitCode(ExitSuccess))
 
 import Control.Monad.State
 
@@ -87,12 +88,10 @@ compileStmt (SExp e) = do
             ++ "swap\n" 
             ++ "invokevirtual java/io/PrintStream/println(I)V\n"
 
-compileProgram :: [Stmt] -> JVMMonad String -- FIXME!!!!!!!!!!! (mapM)
-compileProgram [] = return ""
-compileProgram (x:xs) = do
-    result1 <- compileStmt x
-    result2 <- compileProgram xs
-    return $ result1 ++ result2
+compileProgram :: [Stmt] -> JVMMonad String
+compileProgram stmts = do
+    result <- mapM compileStmt stmts
+    return $ concat result
 
 compile :: Program -> String -> IO String
 compile (Prog stmts) className = do
@@ -125,9 +124,10 @@ runCompiler filePath = do
             result <- compile prog $ takeBaseName filePath
             let jasminFilePath = dropExtension filePath ++ ".j"
             writeFile jasminFilePath result
-            runCommand $ "java -jar jasmin.jar -d " -- FIXME!!!!!!!!!
-                        ++ takeDirectory filePath 
-                        ++ " " ++ jasminFilePath
+            ExitSuccess <- system $ 
+                "java -jar jasmin.jar -d " 
+                ++ takeDirectory filePath 
+                ++ " " ++ jasminFilePath
             return ()
         Bad msg -> hPutStrLn stderr $ "Error: " ++ msg
 
