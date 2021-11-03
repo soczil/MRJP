@@ -23,15 +23,22 @@ getFreeRegister = do
     put (vars, counter + 1)
     return $ "%t" ++ show counter
 
-register :: Int -> String
-register n = "%t" ++ show n
-
 loadInstr :: String -> Ident -> String
 loadInstr register (Ident id) = register ++ " = load i32, i32* %" ++ id ++ "\n"
 
 arithmeticInstr :: String -> String -> String -> String -> String
 arithmeticInstr register spot1 spot2 opCode = 
     register ++ " = " ++ opCode ++ " i32 " ++ spot1 ++ ", " ++ spot2 ++ "\n"
+
+allocInstr :: Ident -> String
+allocInstr (Ident id) = "%" ++ id ++ " = alloca i32\n"
+
+storeInstr :: String -> Ident -> String
+storeInstr register (Ident id) =
+    "store i32 " ++ register ++ ", i32* %" ++ id ++ "\n"
+
+printInstr :: String -> String
+printInstr spot = "call void @printInt(i32 " ++ spot ++ ")\n"
 
 compileArithmeticExp :: Exp -> Exp -> String -> LLVMMonad (String, String)
 compileArithmeticExp e1 e2 opCode = do
@@ -52,10 +59,14 @@ compileExp (ExpVar id) = do
     return (loadInstr register id, register)
 
 compileStmt :: Stmt -> LLVMMonad String
-compileStmt (SAss id e) = undefined
+compileStmt (SAss id e) = do
+    (vars, counter) <- get
+    put (S.insert id vars, counter)
+    (result, spot) <- compileExp e
+    return $ result ++ allocInstr id ++ storeInstr spot id
 compileStmt (SExp e) = do
-    (result, _) <- compileExp e
-    return result
+    (result, spot) <- compileExp e
+    return $ result ++ printInstr spot
 
 compileProgram :: [Stmt] -> LLVMMonad String
 compileProgram stmts = do
@@ -65,7 +76,15 @@ compileProgram stmts = do
 compile :: Program -> IO String
 compile (Prog stmts) = do
     let (compiledCode, _) = runState (compileProgram stmts) emptyState
-    return compiledCode
+    return $ completeCode compiledCode
+
+completeCode :: String -> String
+completeCode code = 
+    "declare void @printInt(i32)\n"
+    ++ "define i32 @main() {\n"
+    ++ code
+    ++ "ret i32 0\n"
+    ++ "}\n"
 
 runCompiler :: String -> IO ()
 runCompiler filePath = do

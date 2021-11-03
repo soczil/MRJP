@@ -6,3 +6,5 @@ Instant
 testy
 *.j
 *.class
+*.ll
+*.bc
