@@ -47,6 +47,7 @@ getStmtStackSize (SAss _ e) = getExpStackSize e (0, 0)
 getStmtStackSize (SExp e) = getExpStackSize e (0, 2)
 
 getStackLimit :: [Stmt] -> Int
+getStackLimit [] = 0
 getStackLimit stmts = 
     maximum (foldl (\acc (_, maxSize) -> acc ++ [maxSize]) [] (map getStmtStackSize stmts))
 

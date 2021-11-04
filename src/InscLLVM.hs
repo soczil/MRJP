@@ -24,7 +24,7 @@ getFreeRegister :: LLVMMonad String
 getFreeRegister = do
     (vars, counter) <- get
     put (vars, counter + 1)
-    return $ "%t" ++ show counter
+    return $ "%" ++ show counter
 
 loadInstr :: String -> Ident -> String
 loadInstr register (Ident id) = register ++ " = load i32, i32* %" ++ id ++ "\n"
@@ -63,8 +63,8 @@ compileExp (ExpVar id) = do
 
 compileStmt :: Stmt -> LLVMMonad String
 compileStmt (SAss id e) = do
-    (vars, counter) <- get
     (result, spot) <- compileExp e
+    (vars, counter) <- get
     when (S.notMember id vars) $ do
         put (S.insert id vars, counter)
     let resultWithAlloc = if S.notMember id vars

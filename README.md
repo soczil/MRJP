@@ -2,7 +2,8 @@
 
 ## Rozwiązanie
 Rozwiązanie napisałem w języku Haskell. W pliku `InscJVM.hs` znajduje się implementacja 
-kompilatora do **JVM**, a w pliku `InscLLVM.hs` do **LLVM**. W katalogu *lib* znajduje się plik 
+kompilatora do **JVM**, a w pliku `InscLLVM.hs` do **LLVM**. Oba te pliki wraz z dostarczonym 
+plikiem `Instant.cf` znajdują się w katalogu *src*. W katalogu *lib* znajduje się plik 
 `jasmin.jar`.
 
 ## Uruchamianie
