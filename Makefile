@@ -10,7 +10,7 @@ PARSER_BUILD = parser_build
 
 .PHONY: all
 
-all: parser jvm llvm clean
+all: clean parser jvm llvm
 
 parser: ${INSTANT_PATH}
 	mkdir ${PARSER_BUILD} && \

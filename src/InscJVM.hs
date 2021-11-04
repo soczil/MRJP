@@ -20,7 +20,7 @@ type JVMState = (M.Map Ident Int, Int)
 type JVMMonad = State JVMState
 
 emptyState :: JVMState
-emptyState = (M.empty, 1) -- FIXME???????
+emptyState = (M.empty, 1)
 
 getArithmeticExpStackSize :: Exp -> Exp -> StackInfo -> StackInfo
 getArithmeticExpStackSize e1 e2 (current, maxSize) = do
@@ -125,7 +125,7 @@ runCompiler filePath = do
             let jasminFilePath = dropExtension filePath ++ ".j"
             writeFile jasminFilePath result
             ExitSuccess <- system $ 
-                "java -jar jasmin.jar -d " 
+                "java -jar lib/jasmin.jar -d " 
                 ++ takeDirectory filePath 
                 ++ " " ++ jasminFilePath
             return ()
