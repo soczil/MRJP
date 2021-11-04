@@ -1,8 +1,8 @@
-module LLVM where
+module InscLLVM where
 
 import System.IO (readFile, writeFile, hPutStrLn, stderr)
 import System.Environment (getArgs)
-import System.FilePath (dropExtension, takeDirectory)
+import System.FilePath (dropExtension) 
 import System.Process (system)
 import System.Exit (ExitCode(ExitSuccess))
 
@@ -67,7 +67,7 @@ compileStmt (SAss id e) = do
     (result, spot) <- compileExp e
     when (S.notMember id vars) $ do
         put (S.insert id vars, counter)
-    let resultWithAlloc = if S.notMember id vars -- FIXME!!!!!!!!
+    let resultWithAlloc = if S.notMember id vars
             then result ++ allocInstr id
             else result
     return $ resultWithAlloc ++ storeInstr spot id
@@ -87,7 +87,13 @@ compile (Prog stmts) = do
 
 completeCode :: String -> String
 completeCode code = 
-    "declare void @printInt(i32)\n"
+    "@dnl = internal constant [4 x i8] c\"%d\\0A\\00\"\n"
+    ++ "declare i32 @printf(i8*, ...)\n"
+    ++ "define void @printInt(i32 %x) {\n"
+    ++ "%t0 = getelementptr [4 x i8], [4 x i8]* @dnl, i32 0, i32 0\n"
+    ++ "call i32 (i8*, ...) @printf(i8* %t0, i32 %x)\n"
+    ++ "ret void\n"
+    ++ "}\n"
     ++ "define i32 @main() {\n"
     ++ code
     ++ "ret i32 0\n"
@@ -101,13 +107,9 @@ runCompiler filePath = do
             result <- compile prog
             let llFilePath = dropExtension filePath ++ ".ll"
             let bcFilePath = dropExtension filePath ++ ".bc"
-            let tempFilePath = takeDirectory filePath ++ "/temp.bc"
             writeFile llFilePath result
             ExitSuccess <- system $ 
-                "llvm-as " ++ llFilePath ++ " -o " ++ tempFilePath
-            ExitSuccess <- system $ 
-                "llvm-link " ++ tempFilePath ++ " runtime.bc -o " ++ bcFilePath
-            ExitSuccess <- system $ "rm -f " ++ tempFilePath
+                "llvm-as " ++ llFilePath ++ " -o " ++ bcFilePath
             return ()
         Bad msg -> hPutStrLn stderr $ "Error: " ++ msg
 

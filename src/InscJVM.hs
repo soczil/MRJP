@@ -1,4 +1,4 @@
-module JVM where
+module InscJVM where
 
 import System.IO (readFile, writeFile, hPutStrLn, stderr)
 import System.Environment (getArgs)
