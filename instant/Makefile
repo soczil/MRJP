@@ -5,7 +5,7 @@ LLVM_PATH = src/${LLVM}.hs
 INSTANT = Instant
 INSTANT_PATH = src/${INSTANT}.cf
 GHC = ghc
-BNFC = bnfc # /home/students/inf/PUBLIC/MRJP/bin/bnfc
+BNFC = /home/students/inf/PUBLIC/MRJP/bin/bnfc
 PARSER_BUILD = parser_build
 
 .PHONY: all
