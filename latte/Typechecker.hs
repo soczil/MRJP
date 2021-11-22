@@ -40,6 +40,35 @@ errMsg (FunAlreadyDeclared id p) = errMsgPref p ++
 emptyState :: TCState
 emptyState = (M.empty, S.empty, Void BNFC'NoPosition)
 
+checkStmt :: Stmt -> TCMonad ()
+checkStmt (Empty _) = return ()
+checkStmt (BStmt p block) = undefined
+checkStmt (Decl p t itms) = undefined
+checkStmt (Ass p id e) = undefined
+checkStmt (Incr p id) = undefined
+checkStmt (Decr p id) = undefined
+checkStmt (Ret p e) = undefined
+checkStmt (VRet p) = undefined
+checkStmt (Cond p e block) = undefined
+checkStmt (CondElse p e block1 block2) = undefined
+checkStmt (While p e block) = undefined
+checkStmt (SExp p e) = undefined
+
+checkExpr :: Expr -> TCMonad Type
+checkExpr (EVar p id) = undefined
+checkExpr (ELitInt p x) = undefined
+checkExpr (ELitTrue p) = undefined
+checkExpr (ELitFalse p) = undefined
+checkExpr (EApp p id exprs) = undefined
+checkExpr (EString p str) = undefined
+checkExpr (Neg p e) = undefined
+checkExpr (Not p e) = undefined
+checkExpr (EMul p e1 op e2) = undefined
+checkExpr (EAdd p e1 op e2) = undefined
+checkExpr (ERel p e1 op e2) = undefined
+checkExpr (EAnd p e1 e2) = undefined
+checkExpr (EOr p e1 e2) = undefined
+
 funToEnv :: TopDef -> TCMonad ()
 funToEnv (FnDef p t id args _) = do
     (env, oldVars, retType) <- get
