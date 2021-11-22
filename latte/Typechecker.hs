@@ -20,6 +20,9 @@ data TCInf = VarInf Type
 
 data TCError = NoMainFunction
              | FunAlreadyDeclared Ident BNFC'Position
+             | VarNotDeclared Ident BNFC'Position
+             | IsNotVar Ident BNFC'Position
+             | WrongType Type Type BNFC'Position
 
 -- ============================ ERROR =================================
 
@@ -54,20 +57,65 @@ checkStmt (CondElse p e block1 block2) = undefined
 checkStmt (While p e block) = undefined
 checkStmt (SExp p e) = undefined
 
+checkType :: Type -> Type -> Bool
+checkType (Int _) (Int _) = True
+checkType (Str _) (Str _) = True
+checkType (Bool _) (Bool _) = True
+checkType (Void _) (Void _) = True
+checkType _ _ = False
+
+assertType :: Type -> Type -> BNFC'Position -> TCMonad ()
+assertType actual expected p =
+    unless (checkType actual expected) $ throwError $ WrongType actual expected p 
+
+assertExprType :: Expr -> Type -> BNFC'Position -> TCMonad ()
+assertExprType e t p = do
+    actualType <- checkExpr e
+    assertType actualType t p
+
+getInf :: Ident -> BNFC'Position -> TCMonad TCInf
+getInf id p = do
+    (env, _, _) <- get
+    case M.lookup id env of
+        Nothing -> throwError $ VarNotDeclared id p
+        Just inf -> return inf
+
+posFromType :: Type -> BNFC'Position
+posFromType (Int p) = p
+posFromType (Str p) = p
+posFromType (Bool p) = p
+posFromType (Void p) = p
+
+checkOpType :: Expr -> Expr -> Type -> TCMonad Type
+checkOpType e1 e2 t = do
+    let p = posFromType t
+    assertExprType e1 t p
+    assertExprType e2 t p
+    return t
+
+checkPrefixOpType :: Expr -> Type -> TCMonad Type
+checkPrefixOpType e t = do
+    assertExprType e t $ posFromType t
+    return t
+
 checkExpr :: Expr -> TCMonad Type
-checkExpr (EVar p id) = undefined
-checkExpr (ELitInt p x) = undefined
-checkExpr (ELitTrue p) = undefined
-checkExpr (ELitFalse p) = undefined
+checkExpr (EVar p id) = do
+    inf <- getInf id p
+    case inf of
+        (VarInf t) -> return t
+        (FunInf _) -> throwError $ IsNotVar id p
+checkExpr (ELitInt p _) = return $ Int p
+checkExpr (ELitTrue p) = return $ Bool p
+checkExpr (ELitFalse p) = return $ Bool p
 checkExpr (EApp p id exprs) = undefined
-checkExpr (EString p str) = undefined
-checkExpr (Neg p e) = undefined
-checkExpr (Not p e) = undefined
-checkExpr (EMul p e1 op e2) = undefined
-checkExpr (EAdd p e1 op e2) = undefined
+checkExpr (EString p _) = return $ Str p
+checkExpr (Neg p e) = checkPrefixOpType e (Int p)
+checkExpr (Not p e) = checkPrefixOpType e (Bool p)
+checkExpr (EMul p e1 _ e2) = checkOpType e1 e2 (Int p)
+checkExpr (EAdd p e1 _ e2) = checkOpType e1 e2 (Int p)
 checkExpr (ERel p e1 op e2) = undefined
-checkExpr (EAnd p e1 e2) = undefined
-checkExpr (EOr p e1 e2) = undefined
+checkExpr (EAnd p e1 e2) = checkOpType e1 e2 (Bool p)
+checkExpr (EOr p e1 e2) = checkOpType e1 e2 (Bool p)
 
 funToEnv :: TopDef -> TCMonad ()
 funToEnv (FnDef p t id args _) = do
