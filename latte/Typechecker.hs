@@ -26,7 +26,8 @@ data TCError = NoMainFunction
              | NotFunction Ident BNFC'Position
              | WrongType Type Type BNFC'Position
              | WrongArgsNumber Ident Int Int BNFC'Position
-             | WrongArgumentType Type Type BNFC'Position
+             | WrongArgType Type Type BNFC'Position
+             | WrongRetType Type Type BNFC'Position
 
 -- ============================ ERROR =================================
 
@@ -69,15 +70,28 @@ checkItem t (Init p id expr) = do
     assertExprType expr t p
     varToEnv id t p
 
+checkRetType :: Type -> BNFC'Position -> TCMonad ()
+checkRetType t p = do
+    (_, _, retType) <- get
+    unless (checkType t retType) $ throwError $ WrongRetType t retType p
+
 checkStmt :: Stmt -> TCMonad ()
 checkStmt (Empty _) = return ()
 checkStmt (BStmt _ block) = checkBlockNewEnv block
 checkStmt (Decl p t itms) = mapM_ (checkItem t) itms
-checkStmt (Ass p id e) = undefined
-checkStmt (Incr p id) = undefined
-checkStmt (Decr p id) = undefined
-checkStmt (Ret p e) = undefined
-checkStmt (VRet p) = undefined
+checkStmt (Ass p id e) = do
+    t <- getVarType id p
+    assertExprType e t p
+checkStmt (Incr p id) = do
+    actual <- getVarType id p
+    assertType actual (Int p) p
+checkStmt (Decr p id) = do
+    actual <- getVarType id p
+    assertType actual (Int p) p
+checkStmt (Ret p e) = do
+    t <- checkExpr e
+    checkRetType t p
+checkStmt (VRet p) = checkRetType (Void p) p
 checkStmt (Cond p e block) = undefined
 checkStmt (CondElse p e block1 block2) = undefined
 checkStmt (While p e block) = undefined
@@ -134,14 +148,17 @@ getFunInf id p = do
 checkFunArg :: BNFC'Position -> (Type, Expr) -> TCMonad ()
 checkFunArg p (t, e) = do
     exprType <- checkExpr e
-    unless (checkType t exprType) $ throwError $ WrongArgumentType exprType t p
+    unless (checkType t exprType) $ throwError $ WrongArgType exprType t p
 
-checkExpr :: Expr -> TCMonad Type
-checkExpr (EVar p id) = do
+getVarType :: Ident -> BNFC'Position -> TCMonad Type
+getVarType id p = do
     inf <- getInf id p
     case inf of
         (VarInf t) -> return t
         _ -> throwError $ NotVar id p
+
+checkExpr :: Expr -> TCMonad Type
+checkExpr (EVar p id) = getVarType id p
 checkExpr (ELitInt p _) = return $ Int p
 checkExpr (ELitTrue p) = return $ Bool p
 checkExpr (ELitFalse p) = return $ Bool p
