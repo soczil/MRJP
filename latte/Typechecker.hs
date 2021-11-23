@@ -9,9 +9,9 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 
 type TCEnv = M.Map Ident TCInf
-type TCOldVars = S.Set Ident
+type TCUsedVars = S.Set Ident
 type TCExcept = ExceptT TCError IO
-type TCState = (TCEnv, TCOldVars, Type)
+type TCState = (TCEnv, TCUsedVars, Type)
 type TCMonad = StateT TCState TCExcept
 
 data TCInf = VarInf Type
@@ -21,6 +21,7 @@ data TCInf = VarInf Type
 data TCError = NoMainFunction
              | FunAlreadyDeclared Ident BNFC'Position
              | VarNotDeclared Ident BNFC'Position
+             | VarAlreadyDeclared Ident BNFC'Position
              | NotVar Ident BNFC'Position
              | NotFunction Ident BNFC'Position
              | WrongType Type Type BNFC'Position
@@ -46,10 +47,32 @@ errMsg (FunAlreadyDeclared id p) = errMsgPref p ++
 emptyState :: TCState
 emptyState = (M.empty, S.empty, Void BNFC'NoPosition)
 
+checkBlock :: Block -> TCMonad ()
+checkBlock (Block _ stmts) = mapM_ checkStmt stmts
+
+checkBlockNewEnv :: Block -> TCMonad ()
+checkBlockNewEnv block = do
+    (oldEnv, oldUsedVars, oldRetType) <- get
+    put (oldEnv, S.fromAscList (M.keys oldEnv), oldRetType)
+    checkBlock block
+    put (oldEnv, oldUsedVars, oldRetType)
+
+varToEnv :: Ident -> Type -> BNFC'Position -> TCMonad ()
+varToEnv id t p = do
+    (env, usedVars, retType) <- get
+    when (M.member id env && S.notMember id usedVars) $ throwError $ VarAlreadyDeclared id p
+    put (M.insert id (VarInf t) env, S.delete id usedVars, retType)
+
+checkItem :: Type -> Item -> TCMonad ()
+checkItem t (NoInit p id) = varToEnv id t p
+checkItem t (Init p id expr) = do
+    assertExprType expr t p
+    varToEnv id t p
+
 checkStmt :: Stmt -> TCMonad ()
 checkStmt (Empty _) = return ()
-checkStmt (BStmt p block) = undefined
-checkStmt (Decl p t itms) = undefined
+checkStmt (BStmt _ block) = checkBlockNewEnv block
+checkStmt (Decl p t itms) = mapM_ (checkItem t) itms
 checkStmt (Ass p id e) = undefined
 checkStmt (Incr p id) = undefined
 checkStmt (Decr p id) = undefined
@@ -144,11 +167,11 @@ checkExpr (EOr p e1 e2) = checkOpType e1 e2 $ Bool p
 
 funToEnv :: TopDef -> TCMonad ()
 funToEnv (FnDef p t id args _) = do
-    (env, oldVars, retType) <- get
+    (env, usedVars, retType) <- get
     case M.lookup id env of
         Nothing -> do
             let argTypeList = foldr (\(Arg _ t _) acc -> t : acc) [] args
-            put (M.insert id (FunInf (t, argTypeList)) env, oldVars, retType)
+            put (M.insert id (FunInf (t, argTypeList)) env, usedVars, retType)
         Just _ -> throwError $ FunAlreadyDeclared id p
 
 checkTopFun :: TopDef -> TCMonad ()
