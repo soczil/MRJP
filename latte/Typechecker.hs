@@ -78,7 +78,7 @@ checkRetType t p = do
 checkStmt :: Stmt -> TCMonad ()
 checkStmt (Empty _) = return ()
 checkStmt (BStmt _ block) = checkBlockNewEnv block
-checkStmt (Decl p t itms) = mapM_ (checkItem t) itms
+checkStmt (Decl _ t itms) = mapM_ (checkItem t) itms
 checkStmt (Ass p id e) = do
     t <- getVarType id p
     assertExprType e t p
@@ -92,10 +92,17 @@ checkStmt (Ret p e) = do
     t <- checkExpr e
     checkRetType t p
 checkStmt (VRet p) = checkRetType (Void p) p
-checkStmt (Cond p e block) = undefined
-checkStmt (CondElse p e block1 block2) = undefined
-checkStmt (While p e block) = undefined
-checkStmt (SExp p e) = undefined
+checkStmt (Cond p e stmt) = do
+    assertExprType e (Bool p) p
+    checkStmt stmt
+checkStmt (CondElse p e stmt1 stmt2) = do
+    assertExprType e (Bool p) p
+    checkStmt stmt1
+    checkStmt stmt2
+checkStmt (While p e stmt) = do
+    assertExprType e (Bool p) p
+    checkStmt stmt
+checkStmt (SExp _ e) = void $ checkExpr e
 
 checkType :: Type -> Type -> Bool
 checkType (Int _) (Int _) = True
