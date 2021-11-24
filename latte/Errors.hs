@@ -13,6 +13,7 @@ data TCError = FunAlreadyDeclared Ident BNFC'Position
              | WrongArgsNumber Ident Int Int BNFC'Position
              | WrongArgType Type Type BNFC'Position
              | WrongRetType Type Type BNFC'Position
+             | NoReturn Ident BNFC'Position
 
 errMsgPref :: BNFC'Position -> String
 errMsgPref p = case p of
@@ -21,6 +22,12 @@ errMsgPref p = case p of
 
 showId :: Ident -> String
 showId (Ident id) = "[" ++ id ++ "]"
+
+showT :: Type -> String
+showT (Int _) = "int"
+showT (Str _) = "string"
+showT (Bool _) = "boolean"
+showT (Void _) = "void"
 
 errMsg :: TCError -> String
 errMsg (FunAlreadyDeclared id p) = errMsgPref p ++
@@ -34,10 +41,12 @@ errMsg (NotAVariable id p) = errMsgPref p ++
 errMsg (NotAFunction id p) = errMsgPref p ++
     printf "%s is not a function" (showId id)
 errMsg (WrongType act exp p) = errMsgPref p ++
-    printf "wrong type - found %s instead of %s" (show act) (show exp)
+    printf "wrong type - found %s instead of %s" (showT act) (showT exp)
 errMsg (WrongArgsNumber id act exp p) = errMsgPref p ++
     printf "function %s takes %d arguments instead of %d" (showId id) exp act
 errMsg (WrongArgType act exp p) = errMsgPref p ++
-    printf "found argument type %s instead of %s" (show act) (show exp)
+    printf "found argument type %s instead of %s" (showT act) (showT exp)
 errMsg (WrongRetType act exp p) = errMsgPref p ++
-    printf "found return type %s instead of %s" (show act) (show exp)
+    printf "found return type %s instead of %s" (showT act) (showT exp)
+errMsg (NoReturn id p) = errMsgPref p ++
+    printf "non-void function %s does not return any value" (showId id)

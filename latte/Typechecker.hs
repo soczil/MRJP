@@ -13,7 +13,7 @@ import Errors
 type TCEnv = M.Map Ident TCInf
 type TCUsedVars = S.Set Ident
 type TCExcept = ExceptT TCError IO
-type TCState = (TCEnv, TCUsedVars, Type)
+type TCState = (TCEnv, TCUsedVars, Type, Bool)
 type TCMonad = StateT TCState TCExcept
 
 data TCInf = VarInf Type
@@ -21,23 +21,23 @@ data TCInf = VarInf Type
     deriving Eq
 
 emptyState :: TCState
-emptyState = (M.empty, S.empty, Void BNFC'NoPosition)
+emptyState = (M.empty, S.empty, Void BNFC'NoPosition, False)
 
 checkBlock :: Block -> TCMonad ()
 checkBlock (Block _ stmts) = mapM_ checkStmt stmts
 
 checkBlockNewEnv :: Block -> TCMonad ()
 checkBlockNewEnv block = do
-    (oldEnv, oldUsedVars, oldRetType) <- get
-    put (oldEnv, S.fromAscList (M.keys oldEnv), oldRetType)
+    (oldEnv, oldUsedVars, oldRetType, oldRet) <- get
+    put (oldEnv, S.fromAscList (M.keys oldEnv), oldRetType, oldRet)
     checkBlock block
-    put (oldEnv, oldUsedVars, oldRetType)
+    put (oldEnv, oldUsedVars, oldRetType, oldRet)
 
 varToEnv :: Ident -> Type -> BNFC'Position -> TCMonad ()
 varToEnv id t p = do
-    (env, usedVars, retType) <- get
+    (env, usedVars, retType, ret) <- get
     when (M.member id env && S.notMember id usedVars) $ throwError $ VarAlreadyDeclared id p
-    put (M.insert id (VarInf t) env, S.delete id usedVars, retType)
+    put (M.insert id (VarInf t) env, S.delete id usedVars, retType, ret)
 
 checkItem :: Type -> Item -> TCMonad ()
 checkItem t (NoInit p id) = varToEnv id t p
@@ -47,7 +47,7 @@ checkItem t (Init p id expr) = do
 
 checkRetType :: Type -> BNFC'Position -> TCMonad ()
 checkRetType t p = do
-    (_, _, retType) <- get
+    (_, _, retType, _) <- get
     unless (checkType t retType) $ throwError $ WrongRetType t retType p
 
 data CondExprVal = CondTrue | CondFalse | CondUndefined deriving (Eq)
@@ -56,6 +56,11 @@ condExprCheck :: Expr -> CondExprVal
 condExprCheck (ELitTrue _) = CondTrue
 condExprCheck (ELitFalse _) = CondFalse
 condExprCheck _ = CondUndefined
+
+-- updateRet :: TCMonad ()
+-- updateRet = do
+--     (env, usedVars, retType, _) <- get
+--     put (env, usedVars, retType, True)
 
 checkStmt :: Stmt -> TCMonad ()
 checkStmt (Empty _) = return ()
@@ -73,6 +78,8 @@ checkStmt (Decr p id) = do
 checkStmt (Ret p e) = do
     t <- checkExpr e
     checkRetType t p
+    (env, usedVars, retType, _) <- get
+    put (env, usedVars, retType, True)
 checkStmt (VRet p) = checkRetType (Void p) p
 checkStmt (Cond p e stmt) = do
     assertExprType e (Bool p) p
@@ -108,7 +115,7 @@ assertExprType e t p = do
 
 getInf :: Ident -> BNFC'Position -> TCMonad TCInf
 getInf id p = do
-    (env, _, _) <- get
+    (env, _, _, _) <- get
     case M.lookup id env of
         Nothing -> throwError $ VarNotDeclared id p
         Just inf -> return inf
@@ -177,26 +184,34 @@ checkExpr (EOr p e1 e2) = checkOpType e1 e2 $ Bool p
 
 funToEnv :: TopDef -> TCMonad ()
 funToEnv (FnDef p t id args _) = do
-    (env, usedVars, retType) <- get
+    (env, usedVars, retType, ret) <- get
     case M.lookup id env of
         Nothing -> do
             let argTypeList = foldr (\(Arg _ t _) acc -> t : acc) [] args
-            put (M.insert id (FunInf (t, argTypeList)) env, usedVars, retType)
+            put (M.insert id (FunInf (t, argTypeList)) env, usedVars, retType, ret)
         Just _ -> throwError $ FunAlreadyDeclared id p
 
 funArgsToEnv :: [Arg] -> TCMonad ()
 funArgsToEnv = mapM_ (\(Arg p argType argId) -> varToEnv argId argType p)
 
+hasFunRet :: Type -> TCMonad Bool
+hasFunRet (Void _) = return True
+hasFunRet _ = do
+    (_, _, _, ret) <- get
+    return ret
+
 checkTopFun :: TCEnv -> TopDef -> TCMonad ()
-checkTopFun initialEnv (FnDef _ t _ args block) = do
-    put (initialEnv, S.empty, t)
+checkTopFun initialEnv (FnDef p t id args block) = do
+    put (initialEnv, S.empty, t, False)
     funArgsToEnv args
     checkBlock block
+    funRet <- hasFunRet t
+    unless funRet $ throwError $ NoReturn id p
 
 checkEveryTopFun :: [TopDef] -> TCMonad ()
 checkEveryTopFun fundefs = do
     mapM_ funToEnv fundefs
-    (initialEnv, _, _) <- get
+    (initialEnv, _, _, _) <- get
     mapM_ (checkTopFun initialEnv) fundefs
 
 check :: Program -> IO (String, Bool)
