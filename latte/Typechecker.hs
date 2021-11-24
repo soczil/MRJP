@@ -173,13 +173,20 @@ funToEnv (FnDef p t id args _) = do
             put (M.insert id (FunInf (t, argTypeList)) env, usedVars, retType)
         Just _ -> throwError $ FunAlreadyDeclared id p
 
-checkTopFun :: TopDef -> TCMonad ()
-checkTopFun = undefined
+funArgsToEnv :: [Arg] -> TCMonad ()
+funArgsToEnv = mapM_ (\(Arg p argType argId) -> varToEnv argId argType p)
+
+checkTopFun :: TCEnv -> TopDef -> TCMonad ()
+checkTopFun initialEnv (FnDef _ t _ args block) = do
+    put (initialEnv, S.empty, t)
+    funArgsToEnv args
+    checkBlock block
 
 checkEveryTopFun :: [TopDef] -> TCMonad ()
 checkEveryTopFun fundefs = do
     mapM_ funToEnv fundefs
-    mapM_ checkTopFun fundefs
+    (initialEnv, _, _) <- get
+    mapM_ (checkTopFun initialEnv) fundefs
 
 check :: Program -> IO (String, Bool)
 check (Program _ fundefs) = do
