@@ -50,6 +50,13 @@ checkRetType t p = do
     (_, _, retType) <- get
     unless (checkType t retType) $ throwError $ WrongRetType t retType p
 
+data CondExprVal = CondTrue | CondFalse | CondUndefined deriving (Eq)
+
+condExprCheck :: Expr -> CondExprVal
+condExprCheck (ELitTrue _) = CondTrue
+condExprCheck (ELitFalse _) = CondFalse
+condExprCheck _ = CondUndefined
+
 checkStmt :: Stmt -> TCMonad ()
 checkStmt (Empty _) = return ()
 checkStmt (BStmt _ block) = checkBlockNewEnv block
@@ -69,11 +76,15 @@ checkStmt (Ret p e) = do
 checkStmt (VRet p) = checkRetType (Void p) p
 checkStmt (Cond p e stmt) = do
     assertExprType e (Bool p) p
-    checkStmt stmt
+    unless (condExprCheck e == CondFalse) $ checkStmt stmt
 checkStmt (CondElse p e stmt1 stmt2) = do
     assertExprType e (Bool p) p
-    checkStmt stmt1
-    checkStmt stmt2
+    case condExprCheck e of
+        CondTrue -> checkStmt stmt1
+        CondFalse -> checkStmt stmt2
+        CondUndefined -> do
+            checkStmt stmt1
+            checkStmt stmt2
 checkStmt (While p e stmt) = do
     assertExprType e (Bool p) p
     checkStmt stmt
