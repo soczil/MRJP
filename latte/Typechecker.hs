@@ -8,6 +8,8 @@ import Latte.Abs
 import qualified Data.Map as M
 import qualified Data.Set as S
 
+import Errors
+
 type TCEnv = M.Map Ident TCInf
 type TCUsedVars = S.Set Ident
 type TCExcept = ExceptT TCError IO
@@ -17,33 +19,6 @@ type TCMonad = StateT TCState TCExcept
 data TCInf = VarInf Type
            | FunInf (Type, [Type]) 
     deriving Eq
-
-data TCError = NoMainFunction
-             | FunAlreadyDeclared Ident BNFC'Position
-             | VarNotDeclared Ident BNFC'Position
-             | VarAlreadyDeclared Ident BNFC'Position
-             | NotVar Ident BNFC'Position
-             | NotFunction Ident BNFC'Position
-             | WrongType Type Type BNFC'Position
-             | WrongArgsNumber Ident Int Int BNFC'Position
-             | WrongArgType Type Type BNFC'Position
-             | WrongRetType Type Type BNFC'Position
-
--- ============================ ERROR =================================
-
-errMsgPref :: BNFC'Position -> String
-errMsgPref p = case p of
-    Nothing -> "Static Error: "
-    Just (l, _) -> "Static Error at line " ++ show l ++ ": "
-
-showId :: Ident -> String
-showId (Ident id) = "[" ++ id ++ "]"
-
-errMsg :: TCError -> String
-errMsg (FunAlreadyDeclared id p) = errMsgPref p ++
-    "Function " ++ showId id ++ " already declared"
-
--- ===================================================================
 
 emptyState :: TCState
 emptyState = (M.empty, S.empty, Void BNFC'NoPosition)
@@ -150,7 +125,7 @@ getFunInf id p = do
     inf <- getInf id p
     case inf of
         (FunInf (_, _)) -> return inf
-        _ -> throwError $ NotFunction id p
+        _ -> throwError $ NotAFunction id p
 
 checkFunArg :: BNFC'Position -> (Type, Expr) -> TCMonad ()
 checkFunArg p (t, e) = do
@@ -162,7 +137,7 @@ getVarType id p = do
     inf <- getInf id p
     case inf of
         (VarInf t) -> return t
-        _ -> throwError $ NotVar id p
+        _ -> throwError $ NotAVariable id p
 
 checkExpr :: Expr -> TCMonad Type
 checkExpr (EVar p id) = getVarType id p
@@ -173,7 +148,7 @@ checkExpr (EApp p id exprs) = do
     (FunInf (t, argTypes)) <- getFunInf id p
     let argLen = length argTypes
     let exprLen = length exprs
-    when (argLen /= exprLen) $ throwError $ WrongArgsNumber id argLen exprLen p
+    when (argLen /= exprLen) $ throwError $ WrongArgsNumber id exprLen argLen p
     let argTypesAndExprs = zip argTypes exprs
     mapM_ (checkFunArg p) argTypesAndExprs
     return t
