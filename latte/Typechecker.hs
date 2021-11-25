@@ -208,10 +208,20 @@ checkTopFun initialEnv (FnDef p t id args block) = do
     funRet <- hasFunRet t
     unless funRet $ throwError $ NoReturn id p
 
+predefinedFuns :: [(Ident, TCInf)]
+predefinedFuns = [
+    (Ident "printInt", FunInf (Void BNFC'NoPosition, [Int BNFC'NoPosition])),
+    (Ident "printString", FunInf (Void BNFC'NoPosition, [Str BNFC'NoPosition])),
+    (Ident "error", FunInf (Void BNFC'NoPosition, [])),
+    (Ident "readInt", FunInf (Int BNFC'NoPosition, [])),
+    (Ident "readString", FunInf (Str BNFC'NoPosition, []))
+    ]
+
 checkEveryTopFun :: [TopDef] -> TCMonad ()
 checkEveryTopFun fundefs = do
     mapM_ funToEnv fundefs
-    (initialEnv, _, _, _) <- get
+    (env, _, _, _) <- get
+    let initialEnv = M.union env $ M.fromList predefinedFuns
     mapM_ (checkTopFun initialEnv) fundefs
 
 check :: Program -> IO (String, Bool)
