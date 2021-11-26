@@ -31,7 +31,8 @@ checkBlockNewEnv block = do
     (oldEnv, oldUsedVars, oldRetType, oldRet) <- get
     put (oldEnv, S.fromAscList (M.keys oldEnv), oldRetType, oldRet)
     checkBlock block
-    put (oldEnv, oldUsedVars, oldRetType, oldRet)
+    newRet <- getRet
+    put (oldEnv, oldUsedVars, oldRetType, newRet)
 
 varToEnv :: Ident -> Type -> BNFC'Position -> TCMonad ()
 varToEnv id t p = do
