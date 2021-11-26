@@ -57,10 +57,15 @@ condExprCheck (ELitTrue _) = CondTrue
 condExprCheck (ELitFalse _) = CondFalse
 condExprCheck _ = CondUndefined
 
--- updateRet :: TCMonad ()
--- updateRet = do
---     (env, usedVars, retType, _) <- get
---     put (env, usedVars, retType, True)
+updateRet :: Bool -> TCMonad ()
+updateRet ret = do
+    (env, usedVars, retType, _) <- get
+    put (env, usedVars, retType, ret)
+
+getRet :: TCMonad Bool
+getRet = do
+    (_, _, _, ret) <- get
+    return ret
 
 checkStmt :: Stmt -> TCMonad ()
 checkStmt (Empty _) = return ()
@@ -78,12 +83,13 @@ checkStmt (Decr p id) = do
 checkStmt (Ret p e) = do
     t <- checkExpr e
     checkRetType t p
-    (env, usedVars, retType, _) <- get
-    put (env, usedVars, retType, True)
+    updateRet True
 checkStmt (VRet p) = checkRetType (Void p) p
 checkStmt (Cond p e stmt) = do
     assertExprType e (Bool p) p
-    unless (condExprCheck e == CondFalse) $ checkStmt stmt
+    let condExprVal = condExprCheck e 
+    unless (condExprVal == CondFalse) $ checkStmt stmt
+    unless (condExprVal == CondTrue) $ updateRet False
 checkStmt (CondElse p e stmt1 stmt2) = do
     assertExprType e (Bool p) p
     case condExprCheck e of
@@ -91,7 +97,11 @@ checkStmt (CondElse p e stmt1 stmt2) = do
         CondFalse -> checkStmt stmt2
         CondUndefined -> do
             checkStmt stmt1
+            ret1 <- getRet
+            updateRet False
             checkStmt stmt2
+            ret2 <- getRet
+            unless (ret1 && ret2) $ updateRet False
 checkStmt (While p e stmt) = do
     assertExprType e (Bool p) p
     checkStmt stmt
@@ -174,7 +184,16 @@ checkExpr (EString p _) = return $ Str p
 checkExpr (Neg p e) = checkPrefixOpType e $ Int p
 checkExpr (Not p e) = checkPrefixOpType e $ Bool p
 checkExpr (EMul p e1 _ e2) = checkOpType e1 e2 $ Int p
-checkExpr (EAdd p e1 _ e2) = checkOpType e1 e2 $ Int p
+checkExpr (EAdd p e1 op e2) = do
+    case op of
+        Plus _ -> do
+            t <- checkExpr e1
+            if checkType t (Int p) || checkType t (Str p)
+                then do
+                    assertExprType e2 t p
+                    return t
+                else throwError $ AddOpError t p
+        _ -> checkOpType e1 e2 $ Int p
 checkExpr (ERel p e1 _ e2) = do
     t <- checkExpr e1
     assertExprType e2 t p
@@ -230,4 +249,4 @@ check (Program _ fundefs) = do
     result <- runExceptT runS
     case result of
         Left err -> return (errMsg err, True)
-        Right _ -> return ("", False)
+        Right _ -> return ("OK", False)

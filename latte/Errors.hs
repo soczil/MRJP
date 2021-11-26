@@ -14,6 +14,7 @@ data TCError = FunAlreadyDeclared Ident BNFC'Position
              | WrongArgType Type Type BNFC'Position
              | WrongRetType Type Type BNFC'Position
              | NoReturn Ident BNFC'Position
+             | AddOpError Type BNFC'Position
 
 errMsgPref :: BNFC'Position -> String
 errMsgPref p = case p of
@@ -49,4 +50,6 @@ errMsg (WrongArgType act exp p) = errMsgPref p ++
 errMsg (WrongRetType act exp p) = errMsgPref p ++
     printf "found return type %s instead of %s" (showT act) (showT exp)
 errMsg (NoReturn id p) = errMsgPref p ++
-    printf "non-void function %s does not return any value" (showId id)
+    printf "there exists a path where non-void function %s does not return any value" (showId id)
+errMsg (AddOpError t p) = errMsgPref p ++
+    printf "add operation cannot be performed on %s type" (showT t)

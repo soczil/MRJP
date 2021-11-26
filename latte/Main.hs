@@ -2,7 +2,9 @@ module Main where
 
 import System.IO
 import System.Environment (getArgs)
-import System.Exit (ExitCode(ExitFailure), exitWith)
+import System.Exit (ExitCode(ExitFailure), exitWith, exitFailure)
+
+import Control.Monad (when)
 
 import Latte.Par
 import Latte.ErrM
@@ -10,10 +12,9 @@ import Latte.ErrM
 import Typechecker
 
 finishTypechecker :: (String, Bool) -> IO ()
-finishTypechecker (_, False) = return ()
-finishTypechecker (msg, True) = do
+finishTypechecker (msg, error) = do
     hPutStrLn stderr msg
-    exitWith $ ExitFailure 1
+    when error $ exitWith $ ExitFailure 1
 
 runCompiler :: String -> IO ()
 runCompiler filePath = do
