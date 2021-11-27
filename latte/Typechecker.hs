@@ -249,5 +249,5 @@ check (Program _ fundefs) = do
     let runS = runStateT (checkEveryTopFun fundefs) emptyState
     result <- runExceptT runS
     case result of
-        Left err -> return (errMsg err, True)
+        Left err -> return ("ERROR\n" ++ errMsg err, True)
         Right _ -> return ("OK", False)

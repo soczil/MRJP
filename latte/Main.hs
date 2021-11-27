@@ -23,7 +23,9 @@ runCompiler filePath = do
         Ok prog -> do
             result <- check prog
             finishTypechecker result
-        Bad msg -> hPutStrLn stderr msg
+        Bad msg -> do
+            hPutStrLn stderr $ "ERROR\n" ++ msg
+            exitWith $ ExitFailure 1
 
 main :: IO ()
 main = do

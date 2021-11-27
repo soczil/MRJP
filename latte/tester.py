@@ -45,13 +45,13 @@ for file in input_files:
         if (p.returncode != 0 
             or p.stderr.decode() != 'OK\n' 
             or p.stdout.decode() != ''):
-            print('ERROR')
+            print('ERRORR')
         else:
             print('OKK')
     else:
         if (p.returncode != 1
-            or p.stderr.decode() == ''
+            or not p.stderr.decode().startswith('ERROR\n')
             or p.stdout.decode() != ''):
-            print('ERROR')
+            print('ERRORR')
         else:
             print('OKK')
