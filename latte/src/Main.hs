@@ -9,7 +9,7 @@ import Control.Monad (when)
 import Latte.Par
 import Latte.ErrM
 
-import Typechecker
+import Typechecker (check)
 
 finishTypechecker :: (String, Bool) -> IO ()
 finishTypechecker (msg, error) = do
