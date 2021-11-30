@@ -40,7 +40,7 @@ for file in os.listdir(dest):
 input_files.sort()
 for file in input_files:
     print(file[:-3], end=': ')
-    p = subprocess.run(['./latc_llvm', dest + file], capture_output=True)
+    p = subprocess.run(['./latc', dest + file], capture_output=True)
     if args.good:
         if (p.returncode != 0 
             or p.stderr.decode() != 'OK\n' 

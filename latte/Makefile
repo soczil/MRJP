@@ -6,7 +6,7 @@ TYPECHECKER = src/Typechecker.hs
 ERRORS = src/Errors.hs
 GHC = ghc
 PARSER_BUILD = parser_build
-EXEC_FILE = latc_llvm
+EXEC_FILE = latc
 
 .PHONY: all
 

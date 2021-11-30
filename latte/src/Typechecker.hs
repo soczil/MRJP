@@ -216,9 +216,7 @@ funArgsToEnv = mapM_ (\(Arg p argType argId) -> varToEnv argId argType p)
 
 hasFunRet :: Type -> TCMonad Bool
 hasFunRet (Void _) = return True
-hasFunRet _ = do
-    (_, _, _, ret) <- get
-    return ret
+hasFunRet _ = getRet
 
 checkTopFun :: TCEnv -> TopDef -> TCMonad ()
 checkTopFun initialEnv (FnDef p t id args block) = do
@@ -237,12 +235,23 @@ predefinedFuns = [
     (Ident "readString", FunInf (Str BNFC'NoPosition, []))
     ]
 
+checkMain :: TCMonad ()
+checkMain = do
+    let id = Ident "main"
+    (env, _, _, _) <- get
+    case M.lookup id env of
+        Nothing -> throwError NoMainFunction
+        Just (FunInf (t, argTypes)) -> do
+            unless (checkType t (Int BNFC'NoPosition)) $ throwError $ WrongMainType t
+            unless (null argTypes) $ throwError $ WrongArgsNumber id (length argTypes) 0 (posFromType $ head argTypes)
+
 checkEveryTopFun :: [TopDef] -> TCMonad ()
 checkEveryTopFun fundefs = do
     mapM_ funToEnv fundefs
+    checkMain
     (env, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
-    mapM_ (checkTopFun initialEnv) fundefs
+    mapM_ (checkTopFun $ M.delete (Ident "main") initialEnv) fundefs
 
 check :: Program -> IO (String, Bool)
 check (Program _ fundefs) = do
