@@ -55,3 +55,4 @@ for file in input_files:
             print('ERRORR')
         else:
             print('OKK')
+            print(p.stderr.decode() + '\n')

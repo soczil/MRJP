@@ -1,4 +1,4 @@
-BNFC = bnfc # /home/students/inf/PUBLIC/MRJP/bin/bnfc
+BNFC = /home/students/inf/PUBLIC/MRJP/bin/bnfc
 LATTE = Latte
 LATTE_PATH = src/${LATTE}.cf
 MAIN = src/Main.hs
