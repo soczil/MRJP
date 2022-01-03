@@ -1,8 +1,9 @@
-BNFC = /home/students/inf/PUBLIC/MRJP/bin/bnfc
+BNFC = bnfc # /home/students/inf/PUBLIC/MRJP/bin/bnfc
 LATTE = Latte
 LATTE_PATH = src/${LATTE}.cf
 MAIN = src/Main.hs
 TYPECHECKER = src/Typechecker.hs
+COMPILER = src/Compiler.hs
 ERRORS = src/Errors.hs
 GHC = ghc
 PARSER_BUILD = parser_build
@@ -21,7 +22,7 @@ parser: ${LATTE_PATH}
 	cd .. && \
 	rm -r -f ${PARSER_BUILD}
 
-main: ${MAIN_PATH} ${TYPECHECKER} ${ERRORS}
+main: ${MAIN_PATH} ${TYPECHECKER} ${COMPILER} ${ERRORS}
 	${GHC} -isrc ${MAIN} -o ${EXEC_FILE}
 
 clean:

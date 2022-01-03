@@ -10,6 +10,7 @@ import Latte.Par
 import Latte.ErrM
 
 import Typechecker (check)
+import Compiler (compile)
 
 finishTypechecker :: (String, Bool) -> IO ()
 finishTypechecker (msg, error) = do
@@ -23,6 +24,7 @@ runCompiler filePath = do
         Ok prog -> do
             result <- check prog
             finishTypechecker result
+            compile prog
         Bad msg -> do
             hPutStrLn stderr $ "ERROR\n" ++ msg
             exitWith $ ExitFailure 1

@@ -18,6 +18,8 @@ data TCError = FunAlreadyDeclared Ident BNFC'Position
              | NoMainFunction
              | WrongMainType Type
 
+data CMPError = DivisionByZero
+
 errMsgPref :: BNFC'Position -> String
 errMsgPref p = case p of
     Nothing -> "Static Error: "
