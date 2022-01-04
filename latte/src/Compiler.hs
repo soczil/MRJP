@@ -4,6 +4,7 @@ import Control.Monad.Except
 import Control.Monad.State
 
 import Data.Maybe
+import Data.List
 import qualified Data.Map as M
 
 import Text.Printf
@@ -19,7 +20,7 @@ type CMPMonad = StateT CMPState CMPExcept
 type ExprRet = (String, String, Type)
 
 emptyState :: CMPState
-emptyState = undefined
+emptyState = (M.empty, 1)
 
 getFreeRegister :: CMPMonad String
 getFreeRegister = do
@@ -41,25 +42,29 @@ toLLVMType (Void _) = "void"
 loadInstr :: String -> Type -> Ident -> String
 loadInstr reg t (Ident id) = do
     let llvmType = toLLVMType t
-    return printf "%s = load %s, %s* \\%%s\n" reg llvmType llvmType id
+    return printf "%s = load %s, %s* %%%s\n" reg llvmType llvmType id
 
 -- TODO: wymyslic lepsza nazwe
 basicInstr :: String -> Type -> String -> String -> String -> String
 basicInstr reg t opCode = 
     printf "%s = %s %s %s, %s\n" reg opCode (toLLVMType t)
 
-compileBlock :: Block -> CMPMonad ()
-compileBlock (Block _ stmts) = mapM_ compileStmt stmts
+compileBlock :: Block -> CMPMonad String
+compileBlock (Block _ stmts) = do
+    result <- mapM compileStmt stmts
+    return $ concat result
 
-compileStmt :: Stmt -> CMPMonad ()
-compileStmt (Empty _) = return ()
+compileStmt :: Stmt -> CMPMonad String
+compileStmt (Empty _) = return ""
 compileStmt (BStmt _ block) = compileBlock block
 compileStmt (Decl p t itms) = undefined
 compileStmt (Ass p id e) = undefined
 compileStmt (Incr p id) = undefined
 compileStmt (Decr p id) = undefined
-compileStmt (Ret p e) = undefined
-compileStmt (VRet p) = undefined
+compileStmt (Ret _ e) = do
+    (result, reg, t) <- compileExpr e
+    return $ result ++ printf "ret %s %s\n" (toLLVMType t) reg
+compileStmt (VRet _) = return "ret void\n"
 compileStmt (Cond p e stmt) = undefined
 compileStmt (CondElse p e stmt1 stmt2) = undefined
 compileStmt (While p e stmt) = undefined
@@ -126,11 +131,25 @@ compileExpr (ERel _ e1 op e2) =
 compileExpr (EAnd _ e1 e2) = compileBoolExpr "and" e1 e2
 compileExpr (EOr _ e1 e2) = compileBoolExpr "or" e1 e2
 
-compileEveryTopFun :: [TopDef] -> CMPMonad ()
-compileEveryTopFun = undefined
+compileArg :: Arg -> String
+compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toLLVMType t) id
 
-compile :: Program -> IO ()
+compileTopFun :: TopDef -> CMPMonad String
+compileTopFun (FnDef _ t (Ident id) args block) = do
+    compiledCode <- compileBlock block
+    let compiledArgs = intercalate ", " $ map compileArg args
+    return $ printf "define %s @%s(%s) {\n%s}\n\n"
+        (toLLVMType t) id compiledArgs compiledCode
+
+compileEveryTopFun :: [TopDef] -> CMPMonad String
+compileEveryTopFun fundefs = do
+    result <- mapM compileTopFun fundefs
+    return $ concat result
+
+compile :: Program -> IO String
 compile (Program _ fundefs) = do
     let runS = runStateT (compileEveryTopFun fundefs) emptyState
     result <- runExceptT runS
-    return ()
+    case result of
+        Left err -> return ""
+        Right (compiledCode, _) -> return compiledCode

@@ -24,7 +24,8 @@ runCompiler filePath = do
         Ok prog -> do
             result <- check prog
             finishTypechecker result
-            compile prog
+            compiledCode <- compile prog
+            putStr compiledCode
         Bad msg -> do
             hPutStrLn stderr $ "ERROR\n" ++ msg
             exitWith $ ExitFailure 1
