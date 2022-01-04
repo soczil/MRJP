@@ -20,6 +20,8 @@ data TCInf = VarInf Type
            | FunInf (Type, [Type]) 
     deriving Eq
 
+data CondExprVal = CondTrue | CondFalse | CondUndefined deriving (Eq)
+
 emptyState :: TCState
 emptyState = (M.empty, S.empty, Void BNFC'NoPosition, False)
 
@@ -50,8 +52,6 @@ checkRetType :: Type -> BNFC'Position -> TCMonad ()
 checkRetType t p = do
     (_, _, retType, _) <- get
     unless (checkType t retType) $ throwError $ WrongRetType t retType p
-
-data CondExprVal = CondTrue | CondFalse | CondUndefined deriving (Eq)
 
 condExprCheck :: Expr -> CondExprVal
 condExprCheck (ELitTrue _) = CondTrue
