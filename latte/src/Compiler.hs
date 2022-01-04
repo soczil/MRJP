@@ -3,6 +3,7 @@ module Compiler (compile) where
 import Control.Monad.Except
 import Control.Monad.State
 
+import Data.Maybe
 import qualified Data.Map as M
 
 import Text.Printf
@@ -15,6 +16,7 @@ type CMPEnv = M.Map Ident Type
 type CMPExcept = ExceptT CMPError IO
 type CMPState = (CMPEnv, Int)
 type CMPMonad = StateT CMPState CMPExcept
+type ExprRet = (String, String, Type)
 
 emptyState :: CMPState
 emptyState = undefined
@@ -41,8 +43,9 @@ loadInstr reg t (Ident id) = do
     let llvmType = toLLVMType t
     return printf "%s = load %s, %s* \\%%s\n" reg llvmType llvmType id
 
-arithmeticInstr :: String -> Type -> String -> String -> String -> String
-arithmeticInstr reg t opCode = 
+-- TODO: wymyslic lepsza nazwe
+basicInstr :: String -> Type -> String -> String -> String -> String
+basicInstr reg t opCode = 
     printf "%s = %s %s %s, %s\n" reg opCode (toLLVMType t)
 
 compileBlock :: Block -> CMPMonad ()
@@ -62,34 +65,66 @@ compileStmt (CondElse p e stmt1 stmt2) = undefined
 compileStmt (While p e stmt) = undefined
 compileStmt (SExp p e) = undefined
 
-compileAddOpExpr :: AddOp -> Type -> String -> String -> CMPMonad (String, String, Type)
-compileAddOpExpr (Plus _) t s1 s2 = do
+getAddOpCode :: AddOp -> String
+getAddOpCode (Plus _) = "add"
+getAddOpCode _ = "sub"
+
+getMulOpCode :: MulOp -> String
+getMulOpCode (Times _) = "mul"
+getMulOpCode (Div _) = "sdiv" -- TODO: moze udiv
+getMulOpCode _ = "mod" -- TODO: to raczej nie jest mod
+
+getRelOpCodeAux :: RelOp -> String
+getRelOpCodeAux (LTH _) = "slt"
+getRelOpCodeAux (LE _) = "sle"
+getRelOpCodeAux (GTH _) = "sgt"
+getRelOpCodeAux (GE _) = "sge"
+getRelOpCodeAux (EQU _) = "eq"
+getRelOpCodeAux (NE _) = "ne"
+
+getRelOpCode :: RelOp -> String
+getRelOpCode op = "icmp " ++ getRelOpCodeAux op
+
+compileArithmeticExpr :: String -> Expr -> Expr -> Maybe Type -> CMPMonad ExprRet
+compileArithmeticExpr opCode e1 e2 retType = do
+    (res1, spot1, t) <- compileExpr e1
+    (res2, spot2, _) <- compileExpr e2
     reg <- getFreeRegister
-    let instr = arithmeticInstr reg t "add" s1 s2
-    return (instr, reg, t)
+    let instr = basicInstr reg t opCode spot1 spot2
+    let result = res1 ++ res2 ++ instr
+    return (result, reg, fromMaybe t retType)
+
+-- TODO: to bedzie dzikie (labelki itp)
+compileBoolExpr :: String -> Expr -> Expr -> CMPMonad ExprRet
+compileBoolExpr opCode e1 e2 = do
+    (res1, spot1, t) <- compileExpr e1
+    (res2, spot2, _) <- compileExpr e2
+    reg <- getFreeRegister
+    let instr = basicInstr reg t opCode spot1 spot2
+    let result = res1 ++ res2 ++ instr
+    return (result, reg, Bool BNFC'NoPosition)
 
 -- TODO: zamienic (String, String) na cos bardziej sensownego (czytelnego) (w calym kodzie!!!)
-compileExpr :: Expr -> CMPMonad (String, String, Type)
+compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
     t <- getVarType id
     reg <- getFreeRegister
     return (loadInstr reg t id, reg, t)
 compileExpr (ELitInt _ n) = return ("", show n, Int BNFC'NoPosition)
-compileExpr (ELitTrue p) = return ("", "true", Bool BNFC'NoPosition)
-compileExpr (ELitFalse p) = return ("", "false", Bool BNFC'NoPosition)
+compileExpr (ELitTrue _) = return ("", "true", Bool BNFC'NoPosition)
+compileExpr (ELitFalse _) = return ("", "false", Bool BNFC'NoPosition)
 compileExpr (EApp p id exprs) = undefined
 compileExpr (EString p s) = undefined
 compileExpr (Neg p e) = undefined
 compileExpr (Not p e) = undefined
-compileExpr (EMul p e1 op e2) = undefined
-compileExpr (EAdd p e1 op e2) = do
-    (res1, spot1, t) <- compileExpr e1
-    (res2, spot2, _) <- compileExpr e2
-    (result, reg, _) <- compileAddOpExpr op t spot1 spot2
-    return ("", "", Bool BNFC'NoPosition)
-compileExpr (ERel p e1 op e2) = undefined
-compileExpr (EAnd p e1 e2) = undefined
-compileExpr (EOr p e1 e2) = undefined
+compileExpr (EMul _ e1 op e2) =
+    compileArithmeticExpr (getMulOpCode op) e1 e2 Nothing
+compileExpr (EAdd _ e1 op e2) =
+    compileArithmeticExpr (getAddOpCode op) e1 e2 Nothing -- TODO: optymalizacja?
+compileExpr (ERel _ e1 op e2) =
+    compileArithmeticExpr (getRelOpCode op) e1 e2 $ Just (Bool BNFC'NoPosition)
+compileExpr (EAnd _ e1 e2) = compileBoolExpr "and" e1 e2
+compileExpr (EOr _ e1 e2) = compileBoolExpr "or" e1 e2
 
 compileEveryTopFun :: [TopDef] -> CMPMonad ()
 compileEveryTopFun = undefined
