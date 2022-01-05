@@ -28,6 +28,11 @@ getFreeRegister = do
     put (vars, counter + 1)
     return $ "%" ++ show counter
 
+varToEnv :: Ident -> Type -> CMPMonad ()
+varToEnv id t = do
+    (env, counter) <- get
+    put (M.insert id t env, counter)
+
 getVarType :: Ident -> CMPMonad Type
 getVarType id = do
     (vars, _) <- get
@@ -68,7 +73,9 @@ compileStmt (VRet _) = return "ret void\n"
 compileStmt (Cond p e stmt) = undefined
 compileStmt (CondElse p e stmt1 stmt2) = undefined
 compileStmt (While p e stmt) = undefined
-compileStmt (SExp p e) = undefined
+compileStmt (SExp _ e) = do
+    (result, _, _) <- compileExpr e
+    return result
 
 getAddOpCode :: AddOp -> String
 getAddOpCode (Plus _) = "add"
@@ -109,6 +116,12 @@ compileBoolExpr opCode e1 e2 = do
     let result = res1 ++ res2 ++ instr
     return (result, reg, Bool BNFC'NoPosition)
 
+getAppPrefix :: Type -> CMPMonad (String, String)
+getAppPrefix (Void _) = return ("", "")
+getAppPrefix _ = do
+    reg <- getFreeRegister
+    return (printf "%s = " reg, reg)
+
 -- TODO: zamienic (String, String) na cos bardziej sensownego (czytelnego) (w calym kodzie!!!)
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
@@ -118,10 +131,24 @@ compileExpr (EVar _ id) = do
 compileExpr (ELitInt _ n) = return ("", show n, Int BNFC'NoPosition)
 compileExpr (ELitTrue _) = return ("", "true", Bool BNFC'NoPosition)
 compileExpr (ELitFalse _) = return ("", "false", Bool BNFC'NoPosition)
-compileExpr (EApp p id exprs) = undefined
+compileExpr (EApp _ (Ident id) exprs) = do
+    t <- getVarType (Ident id)
+    compiledExprs <- mapM compileExpr exprs
+    let result = concatMap (\(result, _, _) -> result) compiledExprs
+    let args = intercalate ", " $ foldr (\(_, reg, t) acc -> 
+            (toLLVMType t ++ " " ++ reg):acc) [] compiledExprs
+    (prefix, reg) <- getAppPrefix t
+    let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
+    return (result ++ instr, reg, t)
 compileExpr (EString p s) = undefined
-compileExpr (Neg p e) = undefined
-compileExpr (Not p e) = undefined
+compileExpr (Neg _ e) = do
+    let newExpr = ELitInt BNFC'NoPosition 0
+    let opCode = getAddOpCode $ Minus BNFC'NoPosition
+    compileArithmeticExpr opCode newExpr e Nothing
+compileExpr (Not _ e) = do
+    let newExpr = ELitFalse BNFC'NoPosition
+    let opCode = getRelOpCode $ EQU BNFC'NoPosition
+    compileArithmeticExpr opCode newExpr e Nothing
 compileExpr (EMul _ e1 op e2) =
     compileArithmeticExpr (getMulOpCode op) e1 e2 Nothing
 compileExpr (EAdd _ e1 op e2) =
@@ -134,6 +161,12 @@ compileExpr (EOr _ e1 e2) = compileBoolExpr "or" e1 e2
 compileArg :: Arg -> String
 compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toLLVMType t) id
 
+funToEnv :: TopDef -> CMPMonad ()
+funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ varToEnv id t
+
+funArgsToEnv :: [Arg] -> CMPMonad ()
+funArgsToEnv = mapM_ (\(Arg _ t id) -> varToEnv id t)
+
 compileTopFun :: TopDef -> CMPMonad String
 compileTopFun (FnDef _ t (Ident id) args block) = do
     compiledCode <- compileBlock block
@@ -143,6 +176,7 @@ compileTopFun (FnDef _ t (Ident id) args block) = do
 
 compileEveryTopFun :: [TopDef] -> CMPMonad String
 compileEveryTopFun fundefs = do
+    mapM_ funToEnv fundefs
     result <- mapM compileTopFun fundefs
     return $ concat result
 
