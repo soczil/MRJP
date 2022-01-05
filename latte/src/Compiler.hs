@@ -15,27 +15,27 @@ import Errors
 
 type CMPEnv = M.Map Ident Type
 type CMPExcept = ExceptT CMPError IO
-type CMPState = (CMPEnv, Int)
+type CMPState = (CMPEnv, Int, Int, String)
 type CMPMonad = StateT CMPState CMPExcept
 type ExprRet = (String, String, Type)
 
 emptyState :: CMPState
-emptyState = (M.empty, 1)
+emptyState = (M.empty, 1, 1, "")
 
 getFreeRegister :: CMPMonad String
 getFreeRegister = do
-    (vars, counter) <- get
-    put (vars, counter + 1)
-    return $ "%" ++ show counter
+    (vars, regCounter, strCounter, globals) <- get
+    put (vars, regCounter + 1, strCounter, globals)
+    return $ "%" ++ show regCounter
 
 varToEnv :: Ident -> Type -> CMPMonad ()
 varToEnv id t = do
-    (env, counter) <- get
-    put (M.insert id t env, counter)
+    (env, regCounter, strCounter, globals) <- get
+    put (M.insert id t env, regCounter, strCounter, globals)
 
 getVarType :: Ident -> CMPMonad Type
 getVarType id = do
-    (vars, _) <- get
+    (vars, _, _, _) <- get
     return $ vars M.! id
 
 toLLVMType :: Type -> String
@@ -169,7 +169,19 @@ compileExpr (EApp _ (Ident id) exprs) = do
     (prefix, reg) <- getAppPrefix t
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
     return (result ++ instr, reg, t)
-compileExpr (EString p s) = undefined
+compileExpr (EString p s) = do
+    (env, regCounter, strCounter, globals) <- get
+    let strLen = length s + 1
+    let newGlobals = globals 
+            ++ printf "@.str%d = private constant [%d x i8] c\"%s\00\"\n" 
+            strCounter strLen s
+    put (env, regCounter, strCounter + 1, newGlobals)
+    reg <- getFreeRegister
+    return (
+        printf "%s = bitcast [%d x i8]* @.str%d to i8*\n" reg strLen strCounter,
+        reg, 
+        Str BNFC'NoPosition
+        )
 compileExpr (Neg _ e) = do
     let newExpr = ELitInt BNFC'NoPosition 0
     let opCode = getAddOpCode $ Minus BNFC'NoPosition
@@ -215,4 +227,5 @@ compile (Program _ fundefs) = do
     result <- runExceptT runS
     case result of
         Left err -> return ""
-        Right (compiledCode, _) -> return compiledCode
+        Right (compiledCode, (_, _, _, globals)) -> 
+            return $ globals ++ compiledCode
