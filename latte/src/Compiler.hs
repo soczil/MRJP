@@ -15,27 +15,33 @@ import Errors
 
 type CMPEnv = M.Map Ident Type
 type CMPExcept = ExceptT CMPError IO
-type CMPState = (CMPEnv, Int, Int, String)
+type CMPState = (CMPEnv, Int, Int, Int, String)
 type CMPMonad = StateT CMPState CMPExcept
 type ExprRet = (String, String, Type)
 
 emptyState :: CMPState
-emptyState = (M.empty, 1, 1, "")
+emptyState = (M.empty, 1, 1, 0, "")
+
+getFreeLabel :: CMPMonad String
+getFreeLabel = do
+    (vars, regCounter, strCounter, lblCounter, globals) <- get
+    put (vars, regCounter, strCounter, lblCounter + 1, globals)
+    return $ "L" ++ show lblCounter
 
 getFreeRegister :: CMPMonad String
 getFreeRegister = do
-    (vars, regCounter, strCounter, globals) <- get
-    put (vars, regCounter + 1, strCounter, globals)
+    (vars, regCounter, strCounter, lblCounter, globals) <- get
+    put (vars, regCounter + 1, strCounter, lblCounter, globals)
     return $ "%" ++ show regCounter
 
 varToEnv :: Ident -> Type -> CMPMonad ()
 varToEnv id t = do
-    (env, regCounter, strCounter, globals) <- get
-    put (M.insert id t env, regCounter, strCounter, globals)
+    (env, regCounter, strCounter, lblCounter, globals) <- get
+    put (M.insert id t env, regCounter, strCounter, lblCounter, globals)
 
 getVarType :: Ident -> CMPMonad Type
 getVarType id = do
-    (vars, _, _, _) <- get
+    (vars, _, _, _, _) <- get
     return $ vars M.! id
 
 toLLVMType :: Type -> String
@@ -61,6 +67,15 @@ storeInstr reg (Ident id) t = do
 basicInstr :: String -> Type -> String -> String -> String -> String
 basicInstr reg t opCode = 
     printf "%s = %s %s %s, %s\n" reg opCode (toLLVMType t)
+
+brInstrC :: String -> String -> String -> String
+brInstrC = printf "br i1 %s, label %%%s, label %%%s\n"
+
+brInstrU :: String -> String
+brInstrU = printf "br label %s\n"
+
+printLabel :: String -> String
+printLabel = printf "%s:\n"
 
 compileBlock :: Block -> CMPMonad String
 compileBlock (Block _ stmts) = do
@@ -99,8 +114,29 @@ compileStmt (Ret _ e) = do
     (result, reg, t) <- compileExpr e
     return $ result ++ printf "ret %s %s\n" (toLLVMType t) reg
 compileStmt (VRet _) = return "ret void\n"
-compileStmt (Cond p e stmt) = undefined
-compileStmt (CondElse p e stmt1 stmt2) = undefined
+compileStmt (Cond _ e stmt) = do
+    (result, spot, _) <- compileExpr e
+    label <- getFreeLabel
+    compiledStmt <- compileStmt stmt
+    return $ result
+        ++ brInstrC spot (label ++ "then") (label ++ "end")
+        ++ printLabel (label ++ "then")
+        ++ compiledStmt
+        ++ printLabel (label ++ "end")
+compileStmt (CondElse _ e stmt1 stmt2) = do
+    (result, spot, _) <- compileExpr e
+    label <- getFreeLabel
+    compiledStmt1 <- compileStmt stmt1
+    compiledStmt2 <- compileStmt stmt2
+    return $ result
+        ++ brInstrC spot (label ++ "then") (label ++ "else")
+        ++ printLabel (label ++ "then")
+        ++ compiledStmt1
+        ++ brInstrU (label ++ "end")
+        ++ printLabel (label ++ "else")
+        ++ compiledStmt2
+        ++ brInstrU (label ++ "end")
+        ++ printLabel (label ++ "end")
 compileStmt (While p e stmt) = undefined
 compileStmt (SExp _ e) = do
     (result, _, _) <- compileExpr e
@@ -170,12 +206,12 @@ compileExpr (EApp _ (Ident id) exprs) = do
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
     return (result ++ instr, reg, t)
 compileExpr (EString p s) = do
-    (env, regCounter, strCounter, globals) <- get
+    (env, regCounter, strCounter, lblCounter, globals) <- get
     let strLen = length s + 1
     let newGlobals = globals 
             ++ printf "@.str%d = private constant [%d x i8] c\"%s\00\"\n" 
             strCounter strLen s
-    put (env, regCounter, strCounter + 1, newGlobals)
+    put (env, regCounter, strCounter + 1, lblCounter, newGlobals)
     reg <- getFreeRegister
     return (
         printf "%s = bitcast [%d x i8]* @.str%d to i8*\n" reg strLen strCounter,
@@ -227,5 +263,5 @@ compile (Program _ fundefs) = do
     result <- runExceptT runS
     case result of
         Left err -> return ""
-        Right (compiledCode, (_, _, _, globals)) -> 
+        Right (compiledCode, (_, _, _, _, globals)) -> 
             return $ globals ++ compiledCode
