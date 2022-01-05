@@ -47,7 +47,15 @@ toLLVMType (Void _) = "void"
 loadInstr :: String -> Type -> Ident -> String
 loadInstr reg t (Ident id) = do
     let llvmType = toLLVMType t
-    return printf "%s = load %s, %s* %%%s\n" reg llvmType llvmType id
+    printf "%s = load %s, %s* %%%s\n" reg llvmType llvmType id
+
+allocInstr :: Ident -> Type -> String
+allocInstr (Ident id) t = printf "%%%s = alloca %s\n" id $ toLLVMType t
+
+storeInstr :: String -> Ident -> Type -> String
+storeInstr reg (Ident id) t = do
+    let llvmType = toLLVMType t
+    printf "store %s %s, %s* %%%s\n" llvmType reg llvmType id
 
 -- TODO: wymyslic lepsza nazwe
 basicInstr :: String -> Type -> String -> String -> String -> String
@@ -59,13 +67,34 @@ compileBlock (Block _ stmts) = do
     result <- mapM compileStmt stmts
     return $ concat result
 
+getDefaultValueExpr :: Type -> Expr
+getDefaultValueExpr (Int _) = ELitInt BNFC'NoPosition 0
+getDefaultValueExpr (Str _) = EString BNFC'NoPosition ""
+getDefaultValueExpr (Bool _) = ELitFalse BNFC'NoPosition
+
+compileItem :: Type -> Item -> CMPMonad String
+compileItem t (NoInit p id) = compileItem t (Init p id (getDefaultValueExpr t))
+compileItem t (Init _ id e) = do
+    (result, spot, _) <- compileExpr e
+    varToEnv id t
+    return $ result ++ allocInstr id t ++ storeInstr spot id t
+
+compileIncrDecrStmt :: Ident -> AddOp -> CMPMonad String
+compileIncrDecrStmt id op = do
+    let p = BNFC'NoPosition
+    compileStmt (Ass p id (EAdd p (EVar p id) op (ELitInt p 1)))
+
 compileStmt :: Stmt -> CMPMonad String
 compileStmt (Empty _) = return ""
 compileStmt (BStmt _ block) = compileBlock block
-compileStmt (Decl p t itms) = undefined
-compileStmt (Ass p id e) = undefined
-compileStmt (Incr p id) = undefined
-compileStmt (Decr p id) = undefined
+compileStmt (Decl _ t itms) = do
+    result <- mapM (compileItem t) itms
+    return $ concat result
+compileStmt (Ass _ id e) = do
+    (result, spot, t) <- compileExpr e
+    return $ result ++ storeInstr spot id t
+compileStmt (Incr _ id) = compileIncrDecrStmt id $ Plus BNFC'NoPosition
+compileStmt (Decr _ id) = compileIncrDecrStmt id $ Minus BNFC'NoPosition
 compileStmt (Ret _ e) = do
     (result, reg, t) <- compileExpr e
     return $ result ++ printf "ret %s %s\n" (toLLVMType t) reg
