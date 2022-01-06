@@ -31,15 +31,12 @@ runCompiler filePath = do
             compiledCode <- compile prog
             let llFilePath = dropExtension filePath ++ ".ll"
             let bcFilePath = dropExtension filePath ++ ".bc"
-            let runtimeFilePath = "../lib/runtime.bc"
-            let fooFilePath = dropExtension filePath ++ "foo.bc"
+            let runtimeFilePath = "lib/runtime.bc"
             writeFile llFilePath compiledCode
             ExitSuccess <- 
-                system $ printf "llvm-as %s -o %s" llFilePath fooFilePath
+                system $ printf "llvm-as %s -o %s" llFilePath bcFilePath
             ExitSuccess <- 
-                system $ printf "llvm-link %s %s -o %s" 
-                fooFilePath runtimeFilePath bcFilePath
-            ExitSuccess <- system $ printf "rm -f %s" fooFilePath
+                system $ printf "llvm-link %s %s -o %s" bcFilePath runtimeFilePath bcFilePath
             return ()
         Bad msg -> do
             hPutStrLn stderr $ "ERROR\n" ++ msg

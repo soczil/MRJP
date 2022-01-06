@@ -271,6 +271,15 @@ predefinedFuns = [
     (Ident "readString", Str BNFC'NoPosition)
     ]
 
+completeCode :: String -> String -> String
+completeCode code globals = "declare void @printInt(i32)\n"
+    ++ "declare void @printString(i8*)\n"
+    ++ "declare void @error()\n"
+    ++ "declare i32 @readInt()\n"
+    ++ "declare i8* @readString()\n\n"
+    ++ globals ++ "\n"
+    ++ code
+
 compileEveryTopFun :: [TopDef] -> CMPMonad String
 compileEveryTopFun fundefs = do
     mapM_ funToEnv fundefs
@@ -286,4 +295,4 @@ compile (Program _ fundefs) = do
     case result of
         Left err -> return ""
         Right (compiledCode, (_, _, _, _, globals)) -> 
-            return $ globals ++ "\n" ++ compiledCode
+            return $ completeCode compiledCode globals
