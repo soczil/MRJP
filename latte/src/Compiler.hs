@@ -143,6 +143,7 @@ compileStmt (Cond _ e stmt) = do
         ++ brInstrC spot (label ++ "then") (label ++ "end")
         ++ printLabel (label ++ "then")
         ++ compiledStmt
+        ++ brInstrU (label ++ "end")
         ++ printLabel (label ++ "end")
 compileStmt (CondElse _ e stmt1 stmt2) = do
     (result, spot, _) <- compileExpr e
@@ -181,7 +182,7 @@ getAddOpCode _ = "sub"
 getMulOpCode :: MulOp -> String
 getMulOpCode (Times _) = "mul"
 getMulOpCode (Div _) = "sdiv" -- TODO: moze udiv
-getMulOpCode _ = "mod" -- TODO: to raczej nie jest mod
+getMulOpCode _ = "srem"
 
 getRelOpCodeAux :: RelOp -> String
 getRelOpCodeAux (LTH _) = "slt"
@@ -283,16 +284,17 @@ funArgToEnv (Arg _ t (Ident id)) = do
     varToEnv (Ident id) t loc
     return $ allocInstr loc t ++ storeInstr ("%" ++ id) loc t
 
-compileTopFun :: CMPEnv -> TopDef -> CMPMonad (String, String)
+compileTopFun :: CMPEnv -> TopDef -> CMPMonad String
 compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
-    put (initialEnv, 1, 1, 0, "")
+    (_, _, strCounter, _, globals) <- get
+    put (initialEnv, 1, strCounter, 0, globals)
     argsDecls <- funArgsToEnv args
     compiledCode <- compileBlock block
     let compiledArgs = intercalate ", " $ map compileArg args
     ret <- getDefaultReturn t
     (_, _, _, _, globals) <- get
-    return (globals, printf "define %s @%s(%s) {\n%s\n%s\n%s}\n\n"
-                     (toLLVMType t) id compiledArgs argsDecls compiledCode ret)
+    return $ printf "define %s @%s(%s) {\n%s\n%s\n%s}\n\n"
+        (toLLVMType t) id compiledArgs argsDecls compiledCode ret
 
 predefinedFuns :: [(Ident, VarInf)]
 predefinedFuns = [
@@ -309,7 +311,7 @@ completeCode globals code = "declare void @printInt(i32)\n"
     ++ "declare void @error()\n"
     ++ "declare i32 @readInt()\n"
     ++ "declare i8* @readString()\n\n"
-    ++ "@.str0 = private constant [1 x i8] c\"\00\"\n"
+    -- ++ "@.str0 = private constant [1 x i8] c\"\00\"\n"
     ++ globals ++ "\n"
     ++ code
 
@@ -319,9 +321,7 @@ compileEveryTopFun fundefs = do
     (env, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
     result <- mapM (compileTopFun initialEnv) fundefs
-    let globals = foldl (\acc (global, _) -> acc ++ global) "" result
-    let compiledCode = foldl (\acc (_, code) -> acc ++ code) "" result
-    return $ completeCode globals compiledCode
+    return $ concat result
 
 compile :: Program -> IO String
 compile (Program _ fundefs) = do
@@ -329,4 +329,5 @@ compile (Program _ fundefs) = do
     result <- runExceptT runS
     case result of
         Left err -> return ""
-        Right (compiledCode, _) -> return compiledCode
+        Right (compiledCode, (_, _, _, _, globals)) -> 
+            return $ completeCode globals compiledCode
