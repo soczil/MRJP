@@ -40,7 +40,7 @@ runCompiler filePath = do
                 system $ printf "llvm-link %s %s -o %s" 
                 fooFilePath runtimeFilePath bcFilePath
             ExitSuccess <- system $ printf "rm -f %s" fooFilePath
-            putStr compiledCode
+            return ()
         Bad msg -> do
             hPutStrLn stderr $ "ERROR\n" ++ msg
             exitWith $ ExitFailure 1

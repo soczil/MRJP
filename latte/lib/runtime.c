@@ -10,7 +10,8 @@ void printString(char* str) {
 }
 
 void error() {
-    printf("runtime error\n");
+    fprintf(stderr, "runtime error\n");
+    exit(EXIT_FAILURE);
 }
 
 int readInt() {

@@ -286,4 +286,4 @@ compile (Program _ fundefs) = do
     case result of
         Left err -> return ""
         Right (compiledCode, (_, _, _, _, globals)) -> 
-            return $ globals ++ compiledCode
+            return $ globals ++ "\n" ++ compiledCode
