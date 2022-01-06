@@ -137,7 +137,17 @@ compileStmt (CondElse _ e stmt1 stmt2) = do
         ++ compiledStmt2
         ++ brInstrU (label ++ "end")
         ++ printLabel (label ++ "end")
-compileStmt (While p e stmt) = undefined
+compileStmt (While p e stmt) = do
+    label <- getFreeLabel
+    (result, spot, _) <- compileExpr e
+    compiledStmt <- compileStmt stmt
+    return $ printLabel (label ++ "cond")
+        ++ result
+        ++ brInstrC spot (label ++ "body") (label ++ "end")
+        ++ printLabel (label ++ "body")
+        ++ compiledStmt
+        ++ brInstrU (label ++ "cond")
+        ++ printLabel (label ++ "end")
 compileStmt (SExp _ e) = do
     (result, _, _) <- compileExpr e
     return result
@@ -187,7 +197,6 @@ getAppPrefix _ = do
     reg <- getFreeRegister
     return (printf "%s = " reg, reg)
 
--- TODO: zamienic (String, String) na cos bardziej sensownego (czytelnego) (w calym kodzie!!!)
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
     t <- getVarType id
@@ -244,17 +253,30 @@ funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ varToEnv id t
 funArgsToEnv :: [Arg] -> CMPMonad ()
 funArgsToEnv = mapM_ (\(Arg _ t id) -> varToEnv id t)
 
-compileTopFun :: TopDef -> CMPMonad String
-compileTopFun (FnDef _ t (Ident id) args block) = do
+compileTopFun :: CMPEnv -> TopDef -> CMPMonad String
+compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
+    put (initialEnv, 1, 1, 0, "")
+    funArgsToEnv args
     compiledCode <- compileBlock block
     let compiledArgs = intercalate ", " $ map compileArg args
     return $ printf "define %s @%s(%s) {\n%s}\n\n"
         (toLLVMType t) id compiledArgs compiledCode
 
+predefinedFuns :: [(Ident, Type)]
+predefinedFuns = [
+    (Ident "printInt", Void BNFC'NoPosition),
+    (Ident "printString", Void BNFC'NoPosition),
+    (Ident "error", Void BNFC'NoPosition),
+    (Ident "readInt", Int BNFC'NoPosition),
+    (Ident "readString", Str BNFC'NoPosition)
+    ]
+
 compileEveryTopFun :: [TopDef] -> CMPMonad String
 compileEveryTopFun fundefs = do
     mapM_ funToEnv fundefs
-    result <- mapM compileTopFun fundefs
+    (env, _, _, _, _) <- get
+    let initialEnv = M.union env $ M.fromList predefinedFuns
+    result <- mapM (compileTopFun initialEnv) fundefs
     return $ concat result
 
 compile :: Program -> IO String
