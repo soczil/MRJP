@@ -97,6 +97,12 @@ getDefaultValueExpr (Int _) = ELitInt BNFC'NoPosition 0
 getDefaultValueExpr (Str _) = EString BNFC'NoPosition ""
 getDefaultValueExpr (Bool _) = ELitFalse BNFC'NoPosition
 
+getDefaultReturn :: Type -> CMPMonad String
+getDefaultReturn (Int _) = return "ret i32 0\n"
+getDefaultReturn (Str p) = compileStmt (Ret p (EString p ""))
+getDefaultReturn (Bool _) = return "ret i1 false\n"
+getDefaultReturn (Void _) = return "ret void\n"
+
 compileItem :: Type -> Item -> CMPMonad String
 compileItem t (NoInit p id) = compileItem t (Init p id (getDefaultValueExpr t))
 compileItem t (Init _ id e) = do
@@ -124,8 +130,11 @@ compileStmt (Incr _ id) = compileIncrDecrStmt id $ Plus BNFC'NoPosition
 compileStmt (Decr _ id) = compileIncrDecrStmt id $ Minus BNFC'NoPosition
 compileStmt (Ret _ e) = do
     (result, reg, t) <- compileExpr e
+    _ <- getFreeRegister
     return $ result ++ printf "ret %s %s\n" (toLLVMType t) reg
-compileStmt (VRet _) = return "ret void\n"
+compileStmt (VRet _) = do
+    _ <- getFreeRegister
+    return "ret void\n"
 compileStmt (Cond _ e stmt) = do
     (result, spot, _) <- compileExpr e
     label <- getFreeLabel
@@ -227,7 +236,7 @@ compileExpr (EApp _ (Ident id) exprs) = do
     (prefix, reg) <- getAppPrefix t
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
     return (result ++ instr, reg, t)
-compileExpr (EString p s) = do
+compileExpr (EString _ s) = do
     (env, regCounter, strCounter, lblCounter, globals) <- get
     let strLen = length s + 1
     let newGlobals = globals 
@@ -263,17 +272,27 @@ compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toLLVMType t) id
 funToEnv :: TopDef -> CMPMonad ()
 funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ varToEnv id t ""
 
-funArgsToEnv :: [Arg] -> CMPMonad ()
-funArgsToEnv = mapM_ (\(Arg _ t (Ident id)) -> varToEnv (Ident id) t ("%" ++ id))
+funArgsToEnv :: [Arg] -> CMPMonad String
+funArgsToEnv args = do
+    result <- mapM funArgToEnv args
+    return $ concat result
 
-compileTopFun :: CMPEnv -> TopDef -> CMPMonad String
+funArgToEnv :: Arg -> CMPMonad String
+funArgToEnv (Arg _ t (Ident id)) = do
+    loc <- getFreeRegister
+    varToEnv (Ident id) t loc
+    return $ allocInstr loc t ++ storeInstr ("%" ++ id) loc t
+
+compileTopFun :: CMPEnv -> TopDef -> CMPMonad (String, String)
 compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
     put (initialEnv, 1, 1, 0, "")
-    funArgsToEnv args
+    argsDecls <- funArgsToEnv args
     compiledCode <- compileBlock block
     let compiledArgs = intercalate ", " $ map compileArg args
-    return $ printf "define %s @%s(%s) {\n%s}\n\n"
-        (toLLVMType t) id compiledArgs compiledCode
+    ret <- getDefaultReturn t
+    (_, _, _, _, globals) <- get
+    return (globals, printf "define %s @%s(%s) {\n%s\n%s\n%s}\n\n"
+                     (toLLVMType t) id compiledArgs argsDecls compiledCode ret)
 
 predefinedFuns :: [(Ident, VarInf)]
 predefinedFuns = [
@@ -285,11 +304,12 @@ predefinedFuns = [
     ]
 
 completeCode :: String -> String -> String
-completeCode code globals = "declare void @printInt(i32)\n"
+completeCode globals code = "declare void @printInt(i32)\n"
     ++ "declare void @printString(i8*)\n"
     ++ "declare void @error()\n"
     ++ "declare i32 @readInt()\n"
     ++ "declare i8* @readString()\n\n"
+    ++ "@.str0 = private constant [1 x i8] c\"\00\"\n"
     ++ globals ++ "\n"
     ++ code
 
@@ -299,7 +319,9 @@ compileEveryTopFun fundefs = do
     (env, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
     result <- mapM (compileTopFun initialEnv) fundefs
-    return $ concat result
+    let globals = foldl (\acc (global, _) -> acc ++ global) "" result
+    let compiledCode = foldl (\acc (_, code) -> acc ++ code) "" result
+    return $ completeCode globals compiledCode
 
 compile :: Program -> IO String
 compile (Program _ fundefs) = do
@@ -307,5 +329,4 @@ compile (Program _ fundefs) = do
     result <- runExceptT runS
     case result of
         Left err -> return ""
-        Right (compiledCode, (_, _, _, _, globals)) -> 
-            return $ completeCode compiledCode globals
+        Right (compiledCode, _) -> return compiledCode
