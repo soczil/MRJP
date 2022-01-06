@@ -13,7 +13,9 @@ import Latte.Abs
 
 import Errors
 
-type CMPEnv = M.Map Ident Type
+-- TODO: zrobic varinf i funinf oddzielnie bo to jest jakas zenada
+type VarInf = (Type, String)
+type CMPEnv = M.Map Ident VarInf
 type CMPExcept = ExceptT CMPError IO
 type CMPState = (CMPEnv, Int, Int, Int, String)
 type CMPMonad = StateT CMPState CMPExcept
@@ -34,13 +36,13 @@ getFreeRegister = do
     put (vars, regCounter + 1, strCounter, lblCounter, globals)
     return $ "%" ++ show regCounter
 
-varToEnv :: Ident -> Type -> CMPMonad ()
-varToEnv id t = do
+varToEnv :: Ident -> Type -> String -> CMPMonad ()
+varToEnv id t loc = do
     (env, regCounter, strCounter, lblCounter, globals) <- get
-    put (M.insert id t env, regCounter, strCounter, lblCounter, globals)
+    put (M.insert id (t, loc) env, regCounter, strCounter, lblCounter, globals)
 
-getVarType :: Ident -> CMPMonad Type
-getVarType id = do
+getVarInf :: Ident -> CMPMonad VarInf
+getVarInf id = do
     (vars, _, _, _, _) <- get
     return $ vars M.! id
 
@@ -50,18 +52,18 @@ toLLVMType (Str _) = "i8*"
 toLLVMType (Bool _) = "i1"
 toLLVMType (Void _) = "void"
 
-loadInstr :: String -> Type -> Ident -> String
-loadInstr reg t (Ident id) = do
+loadInstr :: String -> Type -> String -> String
+loadInstr reg t loc = do
     let llvmType = toLLVMType t
-    printf "%s = load %s, %s* %%%s\n" reg llvmType llvmType id
+    printf "%s = load %s, %s* %s\n" reg llvmType llvmType loc
 
-allocInstr :: Ident -> Type -> String
-allocInstr (Ident id) t = printf "%%%s = alloca %s\n" id $ toLLVMType t
+allocInstr :: String -> Type -> String
+allocInstr loc t = printf "%s = alloca %s\n" loc $ toLLVMType t
 
-storeInstr :: String -> Ident -> Type -> String
-storeInstr reg (Ident id) t = do
+storeInstr :: String -> String -> Type -> String
+storeInstr reg loc t = do
     let llvmType = toLLVMType t
-    printf "store %s %s, %s* %%%s\n" llvmType reg llvmType id
+    printf "store %s %s, %s* %s\n" llvmType reg llvmType loc
 
 -- TODO: wymyslic lepsza nazwe
 basicInstr :: String -> Type -> String -> String -> String -> String
@@ -72,10 +74,18 @@ brInstrC :: String -> String -> String -> String
 brInstrC = printf "br i1 %s, label %%%s, label %%%s\n"
 
 brInstrU :: String -> String
-brInstrU = printf "br label %s\n"
+brInstrU = printf "br label %%%s\n"
 
 printLabel :: String -> String
 printLabel = printf "%s:\n"
+
+compileBlockNewEnv :: Block -> CMPMonad String
+compileBlockNewEnv block = do
+    (oldEnv, _, _, _, _) <- get
+    result <- compileBlock block
+    (_, regCounter, strCounter, lblCounter, globals) <- get
+    put (oldEnv, regCounter, strCounter, lblCounter, globals)
+    return result
 
 compileBlock :: Block -> CMPMonad String
 compileBlock (Block _ stmts) = do
@@ -91,8 +101,9 @@ compileItem :: Type -> Item -> CMPMonad String
 compileItem t (NoInit p id) = compileItem t (Init p id (getDefaultValueExpr t))
 compileItem t (Init _ id e) = do
     (result, spot, _) <- compileExpr e
-    varToEnv id t
-    return $ result ++ allocInstr id t ++ storeInstr spot id t
+    loc <- getFreeRegister
+    varToEnv id t loc
+    return $ result ++ allocInstr loc t ++ storeInstr spot loc t
 
 compileIncrDecrStmt :: Ident -> AddOp -> CMPMonad String
 compileIncrDecrStmt id op = do
@@ -101,13 +112,14 @@ compileIncrDecrStmt id op = do
 
 compileStmt :: Stmt -> CMPMonad String
 compileStmt (Empty _) = return ""
-compileStmt (BStmt _ block) = compileBlock block
+compileStmt (BStmt _ block) = compileBlockNewEnv block
 compileStmt (Decl _ t itms) = do
     result <- mapM (compileItem t) itms
     return $ concat result
 compileStmt (Ass _ id e) = do
+    (_, loc) <- getVarInf id
     (result, spot, t) <- compileExpr e
-    return $ result ++ storeInstr spot id t
+    return $ result ++ storeInstr spot loc t
 compileStmt (Incr _ id) = compileIncrDecrStmt id $ Plus BNFC'NoPosition
 compileStmt (Decr _ id) = compileIncrDecrStmt id $ Minus BNFC'NoPosition
 compileStmt (Ret _ e) = do
@@ -141,7 +153,8 @@ compileStmt (While p e stmt) = do
     label <- getFreeLabel
     (result, spot, _) <- compileExpr e
     compiledStmt <- compileStmt stmt
-    return $ printLabel (label ++ "cond")
+    return $ brInstrU (label ++ "cond")
+        ++ printLabel (label ++ "cond")
         ++ result
         ++ brInstrC spot (label ++ "body") (label ++ "end")
         ++ printLabel (label ++ "body")
@@ -199,14 +212,14 @@ getAppPrefix _ = do
 
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
-    t <- getVarType id
+    (t, loc) <- getVarInf id
     reg <- getFreeRegister
-    return (loadInstr reg t id, reg, t)
+    return (loadInstr reg t loc, reg, t)
 compileExpr (ELitInt _ n) = return ("", show n, Int BNFC'NoPosition)
 compileExpr (ELitTrue _) = return ("", "true", Bool BNFC'NoPosition)
 compileExpr (ELitFalse _) = return ("", "false", Bool BNFC'NoPosition)
 compileExpr (EApp _ (Ident id) exprs) = do
-    t <- getVarType (Ident id)
+    (t, _) <- getVarInf (Ident id)
     compiledExprs <- mapM compileExpr exprs
     let result = concatMap (\(result, _, _) -> result) compiledExprs
     let args = intercalate ", " $ foldr (\(_, reg, t) acc -> 
@@ -248,10 +261,10 @@ compileArg :: Arg -> String
 compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toLLVMType t) id
 
 funToEnv :: TopDef -> CMPMonad ()
-funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ varToEnv id t
+funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ varToEnv id t ""
 
 funArgsToEnv :: [Arg] -> CMPMonad ()
-funArgsToEnv = mapM_ (\(Arg _ t id) -> varToEnv id t)
+funArgsToEnv = mapM_ (\(Arg _ t (Ident id)) -> varToEnv (Ident id) t ("%" ++ id))
 
 compileTopFun :: CMPEnv -> TopDef -> CMPMonad String
 compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
@@ -262,13 +275,13 @@ compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
     return $ printf "define %s @%s(%s) {\n%s}\n\n"
         (toLLVMType t) id compiledArgs compiledCode
 
-predefinedFuns :: [(Ident, Type)]
+predefinedFuns :: [(Ident, VarInf)]
 predefinedFuns = [
-    (Ident "printInt", Void BNFC'NoPosition),
-    (Ident "printString", Void BNFC'NoPosition),
-    (Ident "error", Void BNFC'NoPosition),
-    (Ident "readInt", Int BNFC'NoPosition),
-    (Ident "readString", Str BNFC'NoPosition)
+    (Ident "printInt", (Void BNFC'NoPosition, "")),
+    (Ident "printString", (Void BNFC'NoPosition, "")),
+    (Ident "error", (Void BNFC'NoPosition, "")),
+    (Ident "readInt", (Int BNFC'NoPosition, "")),
+    (Ident "readString", (Str BNFC'NoPosition, ""))
     ]
 
 completeCode :: String -> String -> String
