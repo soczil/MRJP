@@ -3,6 +3,8 @@ import argparse
 import subprocess
 import filecmp
 
+bad = 0
+
 def check_output(file, dest):
     bc_file = file[:-3] + 'bc'
     output_file = file[:-3] + 'output'
@@ -17,6 +19,7 @@ def check_output(file, dest):
     f.close()
     if p.returncode != 0 or not filecmp.cmp(test_file, output_file):
         print('BAD')
+        bad += 1
     else:
         print('OKK')
 
@@ -76,6 +79,7 @@ for file in input_files:
             or not p.stderr.decode().startswith('OK\n') 
             or p.stdout.decode() != ''):
             print('BAD')
+            bad += 1
             print(p.returncode)
             print(p.stderr.decode())
         else:
@@ -85,6 +89,7 @@ for file in input_files:
             or not p.stderr.decode().startswith('ERROR\n')
             or p.stdout.decode() != ''):
             print('BAD')
+            bad += 1
         else:
             print('OKK')
             # print(p.stderr.decode() + '\n')
@@ -95,3 +100,6 @@ if args.clean:
             or file.endswith('.bc')
             or file.endswith('.test')):
             os.remove(dest + file)
+
+if bad == 0:
+    print('\n\n\n\nKLASUNIA SWIATOWA\n\n\n\n')
