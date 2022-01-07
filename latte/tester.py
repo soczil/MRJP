@@ -3,12 +3,17 @@ import argparse
 import subprocess
 import filecmp
 
-def check_output(file):
+def check_output(file, dest):
     bc_file = file[:-3] + 'bc'
     output_file = file[:-3] + 'output'
     test_file = file[:-3] + 'test'
     f = open(test_file, 'w')
-    p = subprocess.run(['lli', bc_file], stdout=f)
+    if bc_file == dest + 'core018.bc':
+        input_file = open(dest + 'core018.input', 'r')
+        p = subprocess.run(['lli', bc_file], stdin=input_file , stdout=f)
+        input_file.close()
+    else:
+        p = subprocess.run(['lli', bc_file], stdout=f)
     f.close()
     if p.returncode != 0 or not filecmp.cmp(test_file, output_file):
         print('BAD')
@@ -63,7 +68,7 @@ for file in os.listdir(dest):
 
 input_files.sort()
 for file in input_files:
-    print(file[:-3], end=': ')
+    print(file[:-4], end=': ')
     latc_file = dest + file
     p = subprocess.run(['./latc_llvm', latc_file], capture_output=True)
     if args.good:
@@ -74,7 +79,7 @@ for file in input_files:
             print(p.returncode)
             print(p.stderr.decode())
         else:
-            check_output(latc_file)
+            check_output(latc_file, dest)
     else:
         if (p.returncode != 1
             or not p.stderr.decode().startswith('ERROR\n')

@@ -79,6 +79,12 @@ brInstrU = printf "br label %%%s\n"
 printLabel :: String -> String
 printLabel = printf "%s:\n"
 
+callInstr :: String -> Type -> String -> [ExprRet] -> String
+callInstr reg t fun args = do
+    let compiledArgs = intercalate ", " $ foldr (\(_, reg, argType) acc -> 
+            (toLLVMType argType ++ " " ++ reg):acc) [] args
+    printf "%s = call %s @%s(%s)\n" reg (toLLVMType t) fun compiledArgs
+
 compileBlockNewEnv :: Block -> CMPMonad String
 compileBlockNewEnv block = do
     (oldEnv, _, _, _, _) <- get
@@ -99,7 +105,7 @@ getDefaultValueExpr (Bool _) = ELitFalse BNFC'NoPosition
 
 getDefaultReturn :: Type -> CMPMonad String
 getDefaultReturn (Int _) = return "ret i32 0\n"
-getDefaultReturn (Str p) = compileStmt (Ret p (EString p ""))
+getDefaultReturn (Str p) = compileStmt (Ret p (EString p "")) -- TODO: jeden pusty ziomek
 getDefaultReturn (Bool _) = return "ret i1 false\n"
 getDefaultReturn (Void _) = return "ret void\n"
 
@@ -204,6 +210,38 @@ compileArithmeticExpr opCode e1 e2 retType = do
     let result = res1 ++ res2 ++ instr
     return (result, reg, fromMaybe t retType)
 
+compileAddExpr :: AddOp -> Expr -> Expr -> CMPMonad ExprRet
+compileAddExpr (Minus p) e1 e2 = 
+    compileArithmeticExpr "sub" e1 e2 Nothing
+compileAddExpr _ e1 e2 = do
+    let opCode = "add"
+    (res1, spot1, t) <- compileExpr e1
+    (res2, spot2, _) <- compileExpr e2
+    case t of
+        Str _ -> do
+            let p = BNFC'NoPosition
+            reg1 <- getFreeRegister
+            reg2 <- getFreeRegister
+            reg3 <- getFreeRegister
+            reg4 <- getFreeRegister
+            reg5 <- getFreeRegister
+            reg6 <- getFreeRegister
+            reg7 <- getFreeRegister
+            let instr = callInstr reg1 (Int p) "strlen" [("", spot1, t)]
+                    ++ callInstr reg2 (Int p) "strlen" [("", spot2, t)]
+                    ++ basicInstr reg3 (Int p) opCode reg1 "1"
+                    ++ basicInstr reg4 (Int p) opCode reg3 reg2
+                    ++ callInstr reg5 t "malloc" [("", reg4, Int p)]
+                    ++ callInstr reg6 t "strcpy" [("", reg5, t), ("", spot1, t)]
+                    ++ callInstr reg7 t "strcat" [("", reg6, t), ("", spot2, t)]
+            return (res1 ++ res2 ++ instr, reg7, t)
+        _ -> do
+            reg <- getFreeRegister
+            let instr = basicInstr reg t opCode spot1 spot2
+            let result = res1 ++ res2 ++ instr
+            return (result, reg, t)
+
+
 -- TODO: to bedzie dzikie (labelki itp)
 compileBoolExpr :: String -> Expr -> Expr -> CMPMonad ExprRet
 compileBoolExpr opCode e1 e2 = do
@@ -235,7 +273,7 @@ compileExpr (EApp _ (Ident id) exprs) = do
     let args = intercalate ", " $ foldr (\(_, reg, t) acc -> 
             (toLLVMType t ++ " " ++ reg):acc) [] compiledExprs
     (prefix, reg) <- getAppPrefix t
-    let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
+    let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args -- TODO: jest juz do tego funkcja
     return (result ++ instr, reg, t)
 compileExpr (EString _ s) = do
     (env, regCounter, strCounter, lblCounter, globals) <- get
@@ -260,8 +298,7 @@ compileExpr (Not _ e) = do
     compileArithmeticExpr opCode newExpr e Nothing
 compileExpr (EMul _ e1 op e2) =
     compileArithmeticExpr (getMulOpCode op) e1 e2 Nothing
-compileExpr (EAdd _ e1 op e2) =
-    compileArithmeticExpr (getAddOpCode op) e1 e2 Nothing -- TODO: optymalizacja?
+compileExpr (EAdd _ e1 op e2) = compileAddExpr op e1 e2 -- TODO: optymalizacja?
 compileExpr (ERel _ e1 op e2) =
     compileArithmeticExpr (getRelOpCode op) e1 e2 $ Just (Bool BNFC'NoPosition)
 compileExpr (EAnd _ e1 e2) = compileBoolExpr "and" e1 e2
@@ -310,7 +347,11 @@ completeCode globals code = "declare void @printInt(i32)\n"
     ++ "declare void @printString(i8*)\n"
     ++ "declare void @error()\n"
     ++ "declare i32 @readInt()\n"
-    ++ "declare i8* @readString()\n\n"
+    ++ "declare i8* @readString()\n"
+    ++ "declare i32 @strlen(i8*)\n"
+    ++ "declare i8* @malloc(i32)\n"
+    ++ "declare i8* @strcpy(i8*, i8*)\n"
+    ++ "declare i8* @strcat(i8*, i8*)\n\n"
     -- ++ "@.str0 = private constant [1 x i8] c\"\00\"\n"
     ++ globals ++ "\n"
     ++ code

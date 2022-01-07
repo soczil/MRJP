@@ -10,13 +10,13 @@ void printString(char* str) {
 }
 
 void error() {
-    fprintf(stderr, "runtime error\n");
+    printf("runtime error\n");
     exit(EXIT_FAILURE);
 }
 
 int readInt() {
-    int result;
-    scanf("%d\n", &result);
+    int result = 0;
+    scanf("%d", &result);
     return result;
 }
 
