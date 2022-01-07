@@ -241,16 +241,25 @@ compileAddExpr _ e1 e2 = do
             let result = res1 ++ res2 ++ instr
             return (result, reg, t)
 
-
--- TODO: to bedzie dzikie (labelki itp)
--- compileBoolExpr :: String -> Expr -> Expr -> CMPMonad ExprRet
--- compileBoolExpr opCode e1 e2 = do
---     (res1, spot1, t) <- compileExpr e1
---     (res2, spot2, _) <- compileExpr e2
---     reg <- getFreeRegister
---     let instr = basicInstr reg t opCode spot1 spot2
---     let result = res1 ++ res2 ++ instr
---     return (result, reg, Bool BNFC'NoPosition)
+compileBoolExpr :: Expr -> Expr -> Bool -> CMPMonad ExprRet
+compileBoolExpr e1 e2 isAnd = do
+    let (ifTrue, ifFalse) = if isAnd then ("next", "end") else ("end", "next")
+    loc <- getFreeRegister
+    label <- getFreeLabel
+    (res1, spot1, t) <- compileExpr e1
+    (res2, spot2, _) <- compileExpr e2
+    reg <- getFreeRegister
+    let code = allocInstr loc t
+            ++ res1
+            ++ storeInstr spot1 loc t 
+            ++ brInstrC spot1 (label ++ ifTrue) (label ++ ifFalse)
+            ++ printLabel (label ++ "next")
+            ++ res2
+            ++ storeInstr spot2 loc t
+            ++ brInstrU (label ++ "end")
+            ++ printLabel (label ++ "end")
+            ++ loadInstr reg t loc
+    return (code, reg, t)
 
 getAppPrefix :: Type -> CMPMonad (String, String)
 getAppPrefix (Void _) = return ("", "")
@@ -301,40 +310,8 @@ compileExpr (EMul _ e1 op e2) =
 compileExpr (EAdd _ e1 op e2) = compileAddExpr op e1 e2 -- TODO: optymalizacja?
 compileExpr (ERel _ e1 op e2) =
     compileArithmeticExpr (getRelOpCode op) e1 e2 $ Just (Bool BNFC'NoPosition)
-compileExpr (EAnd _ e1 e2) = do
-    loc <- getFreeRegister
-    label <- getFreeLabel
-    (res1, spot1, t) <- compileExpr e1
-    (res2, spot2, _) <- compileExpr e2
-    reg <- getFreeRegister
-    let code = allocInstr loc t
-            ++ res1
-            ++ storeInstr spot1 loc t 
-            ++ brInstrC spot1 (label ++ "next") (label ++ "end")
-            ++ printLabel (label ++ "next")
-            ++ res2
-            ++ storeInstr spot2 loc t
-            ++ brInstrU (label ++ "end")
-            ++ printLabel (label ++ "end")
-            ++ loadInstr reg t loc
-    return (code, reg, t)
-compileExpr (EOr _ e1 e2) = do
-    loc <- getFreeRegister
-    label <- getFreeLabel
-    (res1, spot1, t) <- compileExpr e1
-    (res2, spot2, _) <- compileExpr e2
-    reg <- getFreeRegister
-    let code = allocInstr loc t
-            ++ res1
-            ++ storeInstr spot1 loc t 
-            ++ brInstrC spot1 (label ++ "end") (label ++ "next")
-            ++ printLabel (label ++ "next")
-            ++ res2
-            ++ storeInstr spot2 loc t
-            ++ brInstrU (label ++ "end")
-            ++ printLabel (label ++ "end")
-            ++ loadInstr reg t loc
-    return (code, reg, t)
+compileExpr (EAnd _ e1 e2) = compileBoolExpr e1 e2 True
+compileExpr (EOr _ e1 e2) = compileBoolExpr e1 e2 False
 
 compileArg :: Arg -> String
 compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toLLVMType t) id
