@@ -1,5 +1,6 @@
 module Compiler (compile) where
 
+-- TODO: czy ja tego wgl potrzebuje????
 import Control.Monad.Except
 import Control.Monad.State
 
@@ -13,13 +14,14 @@ import Latte.Abs
 
 import Errors
 
--- TODO: zrobic varinf i funinf oddzielnie bo to jest jakas zenada
-type VarInf = (Type, String)
-type CMPEnv = M.Map Ident VarInf
-type CMPExcept = ExceptT CMPError IO
+type CMPEnv = M.Map Ident CMPInf
+type CMPExcept = ExceptT CMPError IO -- TODO: no chyba sie nie przyda
 type CMPState = (CMPEnv, Int, Int, Int, String)
 type CMPMonad = StateT CMPState CMPExcept
 type ExprRet = (String, String, Type)
+
+data CMPInf = VarInf (Type, String)
+            | FunInf Type
 
 emptyState :: CMPState
 emptyState = (M.empty, 1, 1, 0, "")
@@ -39,12 +41,14 @@ getFreeRegister = do
 varToEnv :: Ident -> Type -> String -> CMPMonad ()
 varToEnv id t loc = do
     (env, regCounter, strCounter, lblCounter, globals) <- get
-    put (M.insert id (t, loc) env, regCounter, strCounter, lblCounter, globals)
+    put (M.insert id (VarInf (t, loc)) env, regCounter, strCounter, lblCounter, globals)
 
-getVarInf :: Ident -> CMPMonad VarInf
-getVarInf id = do
+getCMPInf :: Ident -> CMPMonad (Type, String)
+getCMPInf id = do
     (vars, _, _, _, _) <- get
-    return $ vars M.! id
+    case vars M.! id of
+        VarInf inf -> return inf
+        FunInf t -> return (t, "")
 
 toLLVMType :: Type -> String
 toLLVMType (Int _) = "i32"
@@ -105,7 +109,7 @@ getDefaultValueExpr (Bool _) = ELitFalse BNFC'NoPosition
 
 getDefaultReturn :: Type -> CMPMonad String
 getDefaultReturn (Int _) = return "ret i32 0\n"
-getDefaultReturn (Str p) = compileStmt (Ret p (EString p "")) -- TODO: jeden pusty ziomek
+getDefaultReturn (Str p) = compileStmt (Ret p (EString p "")) -- TODO: jeden pusty ziomek lepszy niz to lol
 getDefaultReturn (Bool _) = return "ret i1 false\n"
 getDefaultReturn (Void _) = return "ret void\n"
 
@@ -129,7 +133,7 @@ compileStmt (Decl _ t itms) = do
     result <- mapM (compileItem t) itms
     return $ concat result
 compileStmt (Ass _ id e) = do
-    (_, loc) <- getVarInf id
+    (_, loc) <- getCMPInf id
     (result, spot, t) <- compileExpr e
     return $ result ++ storeInstr spot loc t
 compileStmt (Incr _ id) = compileIncrDecrStmt id $ Plus BNFC'NoPosition
@@ -269,20 +273,20 @@ getAppPrefix _ = do
 
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
-    (t, loc) <- getVarInf id
+    (t, loc) <- getCMPInf id
     reg <- getFreeRegister
     return (loadInstr reg t loc, reg, t)
 compileExpr (ELitInt _ n) = return ("", show n, Int BNFC'NoPosition)
 compileExpr (ELitTrue _) = return ("", "true", Bool BNFC'NoPosition)
 compileExpr (ELitFalse _) = return ("", "false", Bool BNFC'NoPosition)
 compileExpr (EApp _ (Ident id) exprs) = do
-    (t, _) <- getVarInf (Ident id)
+    (t, _) <- getCMPInf (Ident id)
     compiledExprs <- mapM compileExpr exprs
     let result = concatMap (\(result, _, _) -> result) compiledExprs
     let args = intercalate ", " $ foldr (\(_, reg, t) acc -> 
             (toLLVMType t ++ " " ++ reg):acc) [] compiledExprs
     (prefix, reg) <- getAppPrefix t
-    let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args -- TODO: jest juz do tego funkcja
+    let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
     return (result ++ instr, reg, t)
 compileExpr (EString _ s) = do
     (env, regCounter, strCounter, lblCounter, globals) <- get
@@ -342,13 +346,13 @@ compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
     return $ printf "define %s @%s(%s) {\n%s\n%s\n%s}\n\n"
         (toLLVMType t) id compiledArgs argsDecls compiledCode ret
 
-predefinedFuns :: [(Ident, VarInf)]
+predefinedFuns :: [(Ident, CMPInf)]
 predefinedFuns = [
-    (Ident "printInt", (Void BNFC'NoPosition, "")),
-    (Ident "printString", (Void BNFC'NoPosition, "")),
-    (Ident "error", (Void BNFC'NoPosition, "")),
-    (Ident "readInt", (Int BNFC'NoPosition, "")),
-    (Ident "readString", (Str BNFC'NoPosition, ""))
+    (Ident "printInt", FunInf (Void BNFC'NoPosition)),
+    (Ident "printString", FunInf (Void BNFC'NoPosition)),
+    (Ident "error", FunInf (Void BNFC'NoPosition)),
+    (Ident "readInt", FunInf (Int BNFC'NoPosition)),
+    (Ident "readString", FunInf (Str BNFC'NoPosition))
     ]
 
 completeCode :: String -> String -> String
