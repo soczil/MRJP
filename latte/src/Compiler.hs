@@ -63,6 +63,13 @@ getCMPInf id = do
             return (t, store M.! loc)
         FunInf t -> return (t, "")
 
+getVarInf :: Ident -> CMPMonad (Type, Loc)
+getVarInf id = do
+    (env, _, _, _, _, _, _, _) <- get
+    case env M.! id of
+        VarInf inf -> return inf
+        FunInf t -> return (t, 0)
+
 toLLVMType :: Type -> String
 toLLVMType (Int _) = "i32"
 toLLVMType (Str _) = "i8*"
@@ -139,6 +146,14 @@ compileIncrDecrStmt id op = do
     let p = BNFC'NoPosition
     compileStmt (Ass p id (EAdd p (EVar p id) op (ELitInt p 1)))
 
+-- getVarsFromEnv :: CMPMonad [Ident]
+-- getVarsFromEnv = do
+--     (env, _, _, _, _, _, _, _) <- get
+--     return $ foldr (\(id, inf) acc ->
+--             case inf of
+--                 VarInf _ -> id:acc
+--                 FunInf _ -> acc) [] $ M.assocs env
+
 compileStmt :: Stmt -> CMPMonad String
 compileStmt (Empty _) = return ""
 compileStmt (BStmt _ block) = compileBlockNewEnv block
@@ -194,9 +209,49 @@ compileStmt (While p e stmt) = do
         ++ compiledStmt
         ++ brInstrU (label ++ "cond")
         ++ printLabel (label ++ "end")
+-- compileStmt (While _ e stmt) = do
+--     label <- getFreeLabel
+--     let (preLabel, condLabel, bodyLabel, endLabel) =
+--             (label ++ "pre", label ++ "cond", label ++ "body", label ++ "end")
+--     (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals) <- get
+--     compileStmt stmt
+--     (_, newStore, _, _, _, _, _, _) <- get
+--     put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals)
+
+--     let vars = foldr (\(id, inf) acc ->
+--             case inf of
+--                 VarInf _ -> id:acc
+--                 FunInf _ -> acc) [] $ M.assocs env
+
+--     phiOptions <- mapM (getPhiOption store newStore preLabel bodyLabel) vars
+--     (result, spot, _) <- compileExpr e
+--     compiledStmt <- compileStmt stmt
+--     return $ brInstrU preLabel
+--         ++ printLabel preLabel
+--         ++ brInstrU condLabel
+--         ++ printLabel condLabel
+--         ++ concat phiOptions
+--         ++ result
+--         ++ brInstrC spot bodyLabel endLabel
+--         ++ printLabel bodyLabel
+--         ++ compiledStmt
+--         ++ brInstrU condLabel
+--         ++ printLabel endLabel
 compileStmt (SExp _ e) = do
     (result, _, _) <- compileExpr e
     return result
+
+-- getPhiOption :: CMPStore -> CMPStore -> String -> String -> Ident -> CMPMonad String
+-- getPhiOption oldStore newStore oldLabel newLabel id = do
+--     (t, loc) <- getVarInf id
+--     let oldReg = oldStore M.! loc
+--     let newReg = newStore M.! loc
+--     if oldReg /= newReg
+--         then do
+--             reg <- getFreeRegister
+--             -- TODO: nadpisac rejestr
+--             return $ phiInstr reg t [(oldReg, oldLabel), (newReg, newLabel)]
+--         else return ""
 
 getAddOpCode :: AddOp -> String
 getAddOpCode (Plus _) = "add"
