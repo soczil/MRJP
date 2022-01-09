@@ -14,46 +14,53 @@ import Latte.Abs
 
 import Errors
 
+type Loc = Int
+type Reg = String
 type CMPEnv = M.Map Ident CMPInf
+type CMPStore = M.Map Loc Reg
 type CMPExcept = ExceptT CMPError IO -- TODO: no chyba sie nie przyda
-type CMPState = (CMPEnv, Int, Int, Int, String, String)
+type CMPState = (CMPEnv, CMPStore, Int, Int, Int, Int, String, String)
 type CMPMonad = StateT CMPState CMPExcept
 type ExprRet = (String, String, Type)
 
-data CMPInf = VarInf (Type, String)
+data CMPInf = VarInf (Type, Loc)
             | FunInf Type
 
 emptyState :: CMPState
-emptyState = (M.empty, 1, 1, 0, "", "")
+emptyState = (M.empty, M.empty, 1, 1, 1, 0, "", "")
 
 getFreeLabel :: CMPMonad String
 getFreeLabel = do
-    (vars, regCounter, strCounter, lblCounter, _, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, _, globals) <- get
     let currentLabel = "L" ++ show lblCounter
-    put (vars, regCounter, strCounter, lblCounter + 1, currentLabel, globals)
+    put (env, store, locCounter, regCounter, strCounter, lblCounter + 1, currentLabel, globals)
     return currentLabel
 
 getCurrentLabel :: CMPMonad String
 getCurrentLabel = do
-    (_, _, _, _, label, _) <- get
+    (_, _, _, _, _, _, label, _) <- get
     return label
 
 getFreeRegister :: CMPMonad String
 getFreeRegister = do
-    (vars, regCounter, strCounter, lblCounter, label, globals) <- get
-    put (vars, regCounter + 1, strCounter, lblCounter, label, globals)
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    put (env, store, locCounter, regCounter + 1, strCounter, lblCounter, label, globals)
     return $ "%" ++ show regCounter
 
-varToEnv :: Ident -> Type -> String -> CMPMonad ()
-varToEnv id t loc = do
-    (env, regCounter, strCounter, lblCounter, label, globals) <- get
-    put (M.insert id (VarInf (t, loc)) env, regCounter, strCounter, lblCounter, label, globals)
+varToEnv :: Ident -> Type -> Reg -> CMPMonad ()
+varToEnv id t reg = do
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    put (
+        M.insert id (VarInf (t, locCounter)) env, 
+        M.insert locCounter reg store, 
+        locCounter + 1, regCounter, strCounter, lblCounter, label, globals)
 
-getCMPInf :: Ident -> CMPMonad (Type, String)
+getCMPInf :: Ident -> CMPMonad (Type, Reg)
 getCMPInf id = do
-    (vars, _, _, _, _, _) <- get
-    case vars M.! id of
-        VarInf inf -> return inf
+    (env, store, _, _, _, _, _, _) <- get
+    case env M.! id of
+        VarInf (t, loc) -> do
+            return (t, store M.! loc)
         FunInf t -> return (t, "")
 
 toLLVMType :: Type -> String
@@ -97,10 +104,10 @@ callInstr reg t fun args = do
 
 compileBlockNewEnv :: Block -> CMPMonad String
 compileBlockNewEnv block = do
-    (oldEnv, _, _, _, _, _) <- get
+    (oldEnv, _, _, _, _, _, _, _) <- get
     result <- compileBlock block
-    (_, regCounter, strCounter, lblCounter, label, globals) <- get
-    put (oldEnv, regCounter, strCounter, lblCounter, label, globals)
+    (_, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    put (oldEnv, store, locCounter, regCounter, strCounter, lblCounter, label, globals)
     return result
 
 compileBlock :: Block -> CMPMonad String
@@ -306,12 +313,12 @@ compileExpr (EApp _ (Ident id) exprs) = do
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
     return (result ++ instr, reg, t)
 compileExpr (EString _ s) = do
-    (env, regCounter, strCounter, lblCounter, label, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
     let strLen = length s + 1
     let newGlobals = globals 
             ++ printf "@.str%d = private constant [%d x i8] c\"%s\00\"\n" 
             strCounter strLen s
-    put (env, regCounter, strCounter + 1, lblCounter, label, newGlobals)
+    put (env, store, locCounter, regCounter, strCounter + 1, lblCounter, label, newGlobals)
     reg <- getFreeRegister
     return (
         printf "%s = bitcast [%d x i8]* @.str%d to i8*\n" reg strLen strCounter,
@@ -353,8 +360,8 @@ funArgToEnv (Arg _ t (Ident id)) = do
 
 compileTopFun :: CMPEnv -> TopDef -> CMPMonad String
 compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
-    (_, _, strCounter, _, _, globals) <- get
-    put (initialEnv, 1, strCounter, 0, "entry", globals)
+    (_, _, _, _, strCounter, _, _, globals) <- get
+    put (initialEnv, M.empty, 1, 1, strCounter, 0, "entry", globals)
     argsDecls <- funArgsToEnv args
     compiledCode <- compileBlock block
     let compiledArgs = intercalate ", " $ map compileArg args
@@ -388,7 +395,7 @@ completeCode globals code = "declare void @printInt(i32)\n"
 compileEveryTopFun :: [TopDef] -> CMPMonad String
 compileEveryTopFun fundefs = do
     mapM_ funToEnv fundefs
-    (env, _, _, _, _, _) <- get
+    (env, _, _, _, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
     result <- mapM (compileTopFun initialEnv) fundefs
     return $ concat result
@@ -399,5 +406,5 @@ compile (Program _ fundefs) = do
     result <- runExceptT runS
     case result of
         Left err -> return ""
-        Right (compiledCode, (_, _, _, _, _, globals)) -> 
+        Right (compiledCode, (_, _, _, _, _, _, _, globals)) -> 
             return $ completeCode globals compiledCode
