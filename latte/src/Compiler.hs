@@ -16,7 +16,7 @@ import Errors
 
 type CMPEnv = M.Map Ident CMPInf
 type CMPExcept = ExceptT CMPError IO -- TODO: no chyba sie nie przyda
-type CMPState = (CMPEnv, Int, Int, Int, String)
+type CMPState = (CMPEnv, Int, Int, Int, String, String)
 type CMPMonad = StateT CMPState CMPExcept
 type ExprRet = (String, String, Type)
 
@@ -24,28 +24,34 @@ data CMPInf = VarInf (Type, String)
             | FunInf Type
 
 emptyState :: CMPState
-emptyState = (M.empty, 1, 1, 0, "")
+emptyState = (M.empty, 1, 1, 0, "", "")
 
 getFreeLabel :: CMPMonad String
 getFreeLabel = do
-    (vars, regCounter, strCounter, lblCounter, globals) <- get
-    put (vars, regCounter, strCounter, lblCounter + 1, globals)
-    return $ "L" ++ show lblCounter
+    (vars, regCounter, strCounter, lblCounter, _, globals) <- get
+    let currentLabel = "L" ++ show lblCounter
+    put (vars, regCounter, strCounter, lblCounter + 1, currentLabel, globals)
+    return currentLabel
+
+getCurrentLabel :: CMPMonad String
+getCurrentLabel = do
+    (_, _, _, _, label, _) <- get
+    return label
 
 getFreeRegister :: CMPMonad String
 getFreeRegister = do
-    (vars, regCounter, strCounter, lblCounter, globals) <- get
-    put (vars, regCounter + 1, strCounter, lblCounter, globals)
+    (vars, regCounter, strCounter, lblCounter, label, globals) <- get
+    put (vars, regCounter + 1, strCounter, lblCounter, label, globals)
     return $ "%" ++ show regCounter
 
 varToEnv :: Ident -> Type -> String -> CMPMonad ()
 varToEnv id t loc = do
-    (env, regCounter, strCounter, lblCounter, globals) <- get
-    put (M.insert id (VarInf (t, loc)) env, regCounter, strCounter, lblCounter, globals)
+    (env, regCounter, strCounter, lblCounter, label, globals) <- get
+    put (M.insert id (VarInf (t, loc)) env, regCounter, strCounter, lblCounter, label, globals)
 
 getCMPInf :: Ident -> CMPMonad (Type, String)
 getCMPInf id = do
-    (vars, _, _, _, _) <- get
+    (vars, _, _, _, _, _) <- get
     case vars M.! id of
         VarInf inf -> return inf
         FunInf t -> return (t, "")
@@ -91,10 +97,10 @@ callInstr reg t fun args = do
 
 compileBlockNewEnv :: Block -> CMPMonad String
 compileBlockNewEnv block = do
-    (oldEnv, _, _, _, _) <- get
+    (oldEnv, _, _, _, _, _) <- get
     result <- compileBlock block
-    (_, regCounter, strCounter, lblCounter, globals) <- get
-    put (oldEnv, regCounter, strCounter, lblCounter, globals)
+    (_, regCounter, strCounter, lblCounter, label, globals) <- get
+    put (oldEnv, regCounter, strCounter, lblCounter, label, globals)
     return result
 
 compileBlock :: Block -> CMPMonad String
@@ -245,24 +251,35 @@ compileAddExpr _ e1 e2 = do
             let result = res1 ++ res2 ++ instr
             return (result, reg, t)
 
+phiInstr :: String -> Type -> [(String, String)] -> String
+phiInstr reg t options = do
+    let compiledOptions = intercalate ", " $ foldr (\(val, inedge) acc -> 
+            ("[" ++ val ++ ", %" ++ inedge ++ "]"):acc) [] options
+    printf "%s = phi %s %s\n" reg (toLLVMType t) compiledOptions
+
 compileBoolExpr :: Expr -> Expr -> Bool -> CMPMonad ExprRet
 compileBoolExpr e1 e2 isAnd = do
-    let (ifTrue, ifFalse) = if isAnd then ("next", "end") else ("end", "next")
-    loc <- getFreeRegister
+    let (ifTrue, ifFalse) = 
+            if isAnd then ("second", "end") else ("end", "second")
     label <- getFreeLabel
     (res1, spot1, t) <- compileExpr e1
+    currentLabel <- getCurrentLabel
+    let predecessor1 = if currentLabel == label 
+        then label ++ "first" else currentLabel ++ "end"
     (res2, spot2, _) <- compileExpr e2
+    currentLabel <- getCurrentLabel
+    let predecessor2 = if currentLabel == label 
+        then label ++ "second" else currentLabel ++ "end"
     reg <- getFreeRegister
-    let code = allocInstr loc t
+    let code = brInstrU (label ++ "first")
+            ++ printLabel (label ++ "first")
             ++ res1
-            ++ storeInstr spot1 loc t 
             ++ brInstrC spot1 (label ++ ifTrue) (label ++ ifFalse)
-            ++ printLabel (label ++ "next")
+            ++ printLabel (label ++ "second")
             ++ res2
-            ++ storeInstr spot2 loc t
             ++ brInstrU (label ++ "end")
             ++ printLabel (label ++ "end")
-            ++ loadInstr reg t loc
+            ++ phiInstr reg t [(spot1, predecessor1), (spot2, predecessor2)]
     return (code, reg, t)
 
 getAppPrefix :: Type -> CMPMonad (String, String)
@@ -289,12 +306,12 @@ compileExpr (EApp _ (Ident id) exprs) = do
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
     return (result ++ instr, reg, t)
 compileExpr (EString _ s) = do
-    (env, regCounter, strCounter, lblCounter, globals) <- get
+    (env, regCounter, strCounter, lblCounter, label, globals) <- get
     let strLen = length s + 1
     let newGlobals = globals 
             ++ printf "@.str%d = private constant [%d x i8] c\"%s\00\"\n" 
             strCounter strLen s
-    put (env, regCounter, strCounter + 1, lblCounter, newGlobals)
+    put (env, regCounter, strCounter + 1, lblCounter, label, newGlobals)
     reg <- getFreeRegister
     return (
         printf "%s = bitcast [%d x i8]* @.str%d to i8*\n" reg strLen strCounter,
@@ -336,13 +353,12 @@ funArgToEnv (Arg _ t (Ident id)) = do
 
 compileTopFun :: CMPEnv -> TopDef -> CMPMonad String
 compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
-    (_, _, strCounter, _, globals) <- get
-    put (initialEnv, 1, strCounter, 0, globals)
+    (_, _, strCounter, _, _, globals) <- get
+    put (initialEnv, 1, strCounter, 0, "entry", globals)
     argsDecls <- funArgsToEnv args
     compiledCode <- compileBlock block
     let compiledArgs = intercalate ", " $ map compileArg args
     ret <- getDefaultReturn t
-    (_, _, _, _, globals) <- get
     return $ printf "define %s @%s(%s) {\n%s\n%s\n%s}\n\n"
         (toLLVMType t) id compiledArgs argsDecls compiledCode ret
 
@@ -372,7 +388,7 @@ completeCode globals code = "declare void @printInt(i32)\n"
 compileEveryTopFun :: [TopDef] -> CMPMonad String
 compileEveryTopFun fundefs = do
     mapM_ funToEnv fundefs
-    (env, _, _, _, _) <- get
+    (env, _, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
     result <- mapM (compileTopFun initialEnv) fundefs
     return $ concat result
@@ -383,5 +399,5 @@ compile (Program _ fundefs) = do
     result <- runExceptT runS
     case result of
         Left err -> return ""
-        Right (compiledCode, (_, _, _, _, globals)) -> 
+        Right (compiledCode, (_, _, _, _, _, globals)) -> 
             return $ completeCode globals compiledCode
