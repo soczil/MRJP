@@ -18,7 +18,7 @@ type Loc = Int
 type Reg = String
 type CMPEnv = M.Map Ident CMPInf
 type CMPStore = M.Map Loc Reg
-type CMPExcept = ExceptT CMPError IO -- TODO: no chyba sie nie przyda
+type CMPExcept = ExceptT String IO -- TODO: no chyba sie nie przyda
 type CMPState = (CMPEnv, CMPStore, Int, Int, Int, Int, String, String)
 type CMPMonad = StateT CMPState CMPExcept
 type ExprRet = (String, String, Type)
@@ -441,7 +441,11 @@ compileArg :: Arg -> String
 compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toLLVMType t) id
 
 funToEnv :: TopDef -> CMPMonad ()
-funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ varToEnv id t ""
+funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ do
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    put (
+        M.insert id (FunInf t) env, 
+        store, locCounter, regCounter, strCounter, lblCounter, label, globals)
 
 funArgsToEnv :: [Arg] -> CMPMonad ()
 funArgsToEnv = mapM_ funArgToEnv
