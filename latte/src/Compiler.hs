@@ -445,9 +445,6 @@ funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ do
         M.insert id (FunInf t) env, 
         store, locCounter, regCounter, strCounter, lblCounter, label, globals)
 
-funArgsToEnv :: [Arg] -> CMPMonad ()
-funArgsToEnv = mapM_ funArgToEnv
-
 funArgToEnv :: Arg -> CMPMonad ()
 funArgToEnv (Arg _ t (Ident id)) = varToEnv (Ident id) t ("%" ++ id)
 
@@ -455,7 +452,7 @@ compileTopFun :: CMPEnv -> TopDef -> CMPMonad String
 compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
     (_, _, _, _, strCounter, _, _, globals) <- get
     put (initialEnv, M.empty, 1, 1, strCounter, 0, "entry", globals)
-    funArgsToEnv args
+    mapM_ funArgToEnv args
     compiledCode <- compileBlock block
     let compiledArgs = intercalate ", " $ map compileArg args
     ret <- getDefaultReturn t
