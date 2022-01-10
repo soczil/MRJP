@@ -97,10 +97,10 @@ toLLVMType (Void _) = "void"
 -- allocInstr :: String -> Type -> String
 -- allocInstr loc t = printf "%s = alloca %s\n" loc $ toLLVMType t
 
-storeInstr :: String -> String -> Type -> String
-storeInstr reg loc t = do
-    let llvmType = toLLVMType t
-    printf "store %s %s, %s* %s\n" llvmType reg llvmType loc
+-- storeInstr :: String -> String -> Type -> String
+-- storeInstr reg loc t = do
+--     let llvmType = toLLVMType t
+--     printf "store %s %s, %s* %s\n" llvmType reg llvmType loc
 
 -- TODO: wymyslic lepsza nazwe
 basicInstr :: String -> Type -> String -> String -> String -> String
@@ -221,6 +221,41 @@ compileStmt (VRet _) = do
 --         ++ compiledStmt
 --         ++ brInstrU (label ++ "cond")
 --         ++ printLabel (label ++ "end")
+compileStmt (Cond p e stmt) = compileStmt (CondElse p e stmt (Empty p))
+compileStmt (CondElse _ e stmt1 stmt2) = do
+    label <- getFreeLabel
+    let (preLabel, thenLabel, elseLabel, endLabel) =
+            (label ++ "pre", label ++ "then", label ++ "else", label ++ "end")
+    (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals) <- get
+    (result, spot, _) <- compileExpr e
+    compiledStmt1 <- compileStmt stmt1
+    (_, thenStore, _, _, _, _, _, _) <- get
+    compiledStmt2 <- compileStmt stmt2
+    (_, elseStore, _, _, _, _, _, _) <- get
+
+    let vars = foldr (\(id, inf) acc ->
+            case inf of
+                VarInf _ -> id:acc
+                FunInf _ -> acc) [] $ M.assocs env
+
+    phiOptionsThen <- mapM (getPhiOption store thenStore elseLabel thenLabel) vars
+    let phiOptionsThenCode = foldl (\acc (code, _, _) -> acc ++ code) "" phiOptionsThen
+    phiOptionsElse <- mapM (getPhiOption thenStore elseStore thenLabel elseLabel) vars
+    let phiOptionsElseCode = foldl (\acc (code, _, _) -> acc ++ code) "" phiOptionsElse
+
+    return $ brInstrU preLabel
+        ++ printLabel preLabel
+        ++ result
+        ++ brInstrC spot thenLabel elseLabel
+        ++ printLabel thenLabel
+        ++ compiledStmt1
+        ++ brInstrU endLabel
+        ++ printLabel elseLabel
+        ++ compiledStmt2
+        ++ brInstrU endLabel
+        ++ printLabel endLabel
+        ++ phiOptionsThenCode
+        ++ phiOptionsElseCode
 compileStmt (While _ e stmt) = do
     label <- getFreeLabel
     let (preLabel, condLabel, bodyLabel, endLabel) =
