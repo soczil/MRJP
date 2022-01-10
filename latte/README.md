@@ -11,10 +11,19 @@ W typecheckerze używam monady **State** do przechowywania stanu, czyli krotki z
 zmiennych, które można w danym momencie przesłonić), typ obecnie sprawdzanej funkcji oraz informacje o 
 tym czy sprawdzana funkcja ma w każdej ścieżce instrukcję `return`.
 
+## Backend
+Rozwiązanie to backend do LLVMa napisany w języku Haskell. W pliku `Compiler.hs` znajduje się implementacja.
+
+Do trzymania stanu używam monady **State**. Stan to krotka zawierająca środowisko (mapę identyfikatorów
+na lokacje), skład (mapę lokacji na rejestry), globalne stałe, obecny blok oraz różne liczniki używane np.
+do generowania kolejnych rejestrów.
+
+W rozwiązaniu korzystam z funkcji *phi* dzięki czemu nie używam instrukcji *alloca*, *store* ani *load*.
+
 ## Uruchamianie
 
 Wystarczy wywołać polecenie `make`. Spowoduje to utworzenie katalogu z parserem oraz pliku wykonywalnego
-`latc` tak jak w poleceniu.
+`latc_llvm` tak jak w poleceniu.
 
 Do czyszczenia `make clean`.
 

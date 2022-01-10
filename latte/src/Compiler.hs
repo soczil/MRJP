@@ -16,7 +16,7 @@ type CMPEnv = M.Map Ident CMPInf
 type CMPStore = M.Map Loc Reg
 type CMPState = (CMPEnv, CMPStore, Int, Int, Int, Int, String, String)
 type CMPMonad = State CMPState
-type ExprRet = (String, String, Type)
+type ExprRet = (String, Reg, Type)
 
 data CMPInf = VarInf (Type, Loc)
             | FunInf Type
@@ -344,7 +344,7 @@ compileAddExpr _ e1 e2 = do
             let result = res1 ++ res2 ++ instr
             return (result, reg, t)
 
-phiInstr :: String -> Type -> [(String, String)] -> String
+phiInstr :: Reg -> Type -> [(Reg, String)] -> String
 phiInstr reg t options = do
     let compiledOptions = intercalate ", " $ foldr (\(val, inedge) acc -> 
             ("[" ++ val ++ ", %" ++ inedge ++ "]"):acc) [] options
@@ -375,7 +375,7 @@ compileBoolExpr e1 e2 isAnd = do
             ++ phiInstr reg t [(spot1, predecessor1), (spot2, predecessor2)]
     return (code, reg, t)
 
-getAppPrefix :: Type -> CMPMonad (String, String)
+getAppPrefix :: Type -> CMPMonad (String, Reg)
 getAppPrefix (Void _) = return ("", "")
 getAppPrefix _ = do
     reg <- getFreeRegister
