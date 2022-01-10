@@ -89,19 +89,6 @@ toLLVMType (Str _) = "i8*"
 toLLVMType (Bool _) = "i1"
 toLLVMType (Void _) = "void"
 
--- loadInstr :: String -> Type -> String -> String
--- loadInstr reg t loc = do
---     let llvmType = toLLVMType t
---     printf "%s = load %s, %s* %s\n" reg llvmType llvmType loc
-
--- allocInstr :: String -> Type -> String
--- allocInstr loc t = printf "%s = alloca %s\n" loc $ toLLVMType t
-
--- storeInstr :: String -> String -> Type -> String
--- storeInstr reg loc t = do
---     let llvmType = toLLVMType t
---     printf "store %s %s, %s* %s\n" llvmType reg llvmType loc
-
 -- TODO: wymyslic lepsza nazwe
 basicInstr :: String -> Type -> String -> String -> String -> String
 basicInstr reg t opCode = 
@@ -158,14 +145,6 @@ compileIncrDecrStmt id op = do
     let p = BNFC'NoPosition
     compileStmt (Ass p id (EAdd p (EVar p id) op (ELitInt p 1)))
 
--- getVarsFromEnv :: CMPMonad [Ident]
--- getVarsFromEnv = do
---     (env, _, _, _, _, _, _, _) <- get
---     return $ foldr (\(id, inf) acc ->
---             case inf of
---                 VarInf _ -> id:acc
---                 FunInf _ -> acc) [] $ M.assocs env
-
 compileStmt :: Stmt -> CMPMonad String
 compileStmt (Empty _) = return ""
 compileStmt (BStmt _ block) = compileBlockNewEnv block
@@ -185,42 +164,6 @@ compileStmt (Ret _ e) = do
 compileStmt (VRet _) = do
     _ <- getFreeRegister
     return "ret void\n"
--- compileStmt (Cond _ e stmt) = do
---     (result, spot, _) <- compileExpr e
---     label <- getFreeLabel
---     compiledStmt <- compileStmt stmt
---     return $ result
---         ++ brInstrC spot (label ++ "then") (label ++ "end")
---         ++ printLabel (label ++ "then")
---         ++ compiledStmt
---         ++ brInstrU (label ++ "end")
---         ++ printLabel (label ++ "end")
--- compileStmt (CondElse _ e stmt1 stmt2) = do
---     (result, spot, _) <- compileExpr e
---     label <- getFreeLabel
---     compiledStmt1 <- compileStmt stmt1
---     compiledStmt2 <- compileStmt stmt2
---     return $ result
---         ++ brInstrC spot (label ++ "then") (label ++ "else")
---         ++ printLabel (label ++ "then")
---         ++ compiledStmt1
---         ++ brInstrU (label ++ "end")
---         ++ printLabel (label ++ "else")
---         ++ compiledStmt2
---         ++ brInstrU (label ++ "end")
---         ++ printLabel (label ++ "end")
--- compileStmt (While p e stmt) = do
---     label <- getFreeLabel
---     (result, spot, _) <- compileExpr e
---     compiledStmt <- compileStmt stmt
---     return $ brInstrU (label ++ "cond")
---         ++ printLabel (label ++ "cond")
---         ++ result
---         ++ brInstrC spot (label ++ "body") (label ++ "end")
---         ++ printLabel (label ++ "body")
---         ++ compiledStmt
---         ++ brInstrU (label ++ "cond")
---         ++ printLabel (label ++ "end")
 compileStmt (Cond p e stmt) = compileStmt (CondElse p e stmt (Empty p))
 compileStmt (CondElse _ e stmt1 stmt2) = do
     label <- getFreeLabel
@@ -238,11 +181,7 @@ compileStmt (CondElse _ e stmt1 stmt2) = do
                 VarInf _ -> id:acc
                 FunInf _ -> acc) [] $ M.assocs env
 
-    phiOptionsThen <- mapM (getPhiOption store thenStore elseLabel thenLabel) vars
-    let phiOptionsThenCode = foldl (\acc (code, _, _) -> acc ++ code) "" phiOptionsThen
-    phiOptionsElse <- mapM (getPhiOption thenStore elseStore thenLabel elseLabel) vars
-    let phiOptionsElseCode = foldl (\acc (code, _, _) -> acc ++ code) "" phiOptionsElse
-
+    phiOptions <- mapM (getPhiOptionForCond store thenStore elseStore thenLabel elseLabel) vars
     return $ brInstrU preLabel
         ++ printLabel preLabel
         ++ result
@@ -254,8 +193,7 @@ compileStmt (CondElse _ e stmt1 stmt2) = do
         ++ compiledStmt2
         ++ brInstrU endLabel
         ++ printLabel endLabel
-        ++ phiOptionsThenCode
-        ++ phiOptionsElseCode
+        ++ concat phiOptions
 compileStmt (While _ e stmt) = do
     label <- getFreeLabel
     let (preLabel, condLabel, bodyLabel, endLabel) =
@@ -279,7 +217,7 @@ compileStmt (While _ e stmt) = do
     (_, newStore, _, _, _, _, _, _) <- get
     put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals)
 
-    phiOptions <- mapM (getPhiOption store newStore preLabel bodyLabel) vars
+    phiOptions <- mapM (getPhiOptionForWhile store newStore preLabel bodyLabel) vars
     let phiCode = foldl (\acc (code, _, _) -> acc ++ code) "" phiOptions
     let phiVars = foldr (\(code, id, reg) acc -> 
             if code /= "" 
@@ -305,6 +243,29 @@ compileStmt (SExp _ e) = do
     (result, _, _) <- compileExpr e
     return result
 
+getPhiOptionForCond :: CMPStore -> CMPStore -> CMPStore -> String -> String -> Ident -> CMPMonad String
+getPhiOptionForCond store thenStore elseStore thenLabel elseLabel id = do
+    (t, loc) <- getVarInf id
+    let oldReg = store M.! loc
+    let thenReg = thenStore M.! loc
+    let elseReg = elseStore M.! loc
+    if thenReg /= elseReg
+        then do
+            reg <- getFreeRegister
+            updateVarReg id reg
+            return $ phiInstr reg t [(thenReg, thenLabel), (elseReg, elseLabel)]
+        else if oldReg /= thenReg 
+            then do
+                reg <- getFreeRegister
+                updateVarReg id reg
+                return $ phiInstr reg t [(thenReg, thenLabel), (oldReg, elseLabel)]
+            else if oldReg /= elseReg
+                then do
+                    reg <- getFreeRegister
+                    updateVarReg id reg
+                    return $ phiInstr reg t [(oldReg, thenLabel), (elseReg, elseLabel)]
+                else return ""
+
 updateVarsRegs :: [(Ident, Reg)] -> CMPMonad ()
 updateVarsRegs [] = return ()
 updateVarsRegs ((id, reg):rest) = do
@@ -318,8 +279,8 @@ isPhiOption oldStore newStore id = do
         then return 1
         else return 0
 
-getPhiOption :: CMPStore -> CMPStore -> String -> String -> Ident -> CMPMonad (String, Ident, Reg)
-getPhiOption oldStore newStore oldLabel newLabel id = do
+getPhiOptionForWhile :: CMPStore -> CMPStore -> String -> String -> Ident -> CMPMonad (String, Ident, Reg)
+getPhiOptionForWhile oldStore newStore oldLabel newLabel id = do
     (t, loc) <- getVarInf id
     let oldReg = oldStore M.! loc
     let newReg = newStore M.! loc
