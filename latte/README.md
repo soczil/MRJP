@@ -13,6 +13,7 @@ tym czy sprawdzana funkcja ma w każdej ścieżce instrukcję `return`.
 
 ## Backend
 Rozwiązanie to backend do LLVMa napisany w języku Haskell. W pliku `Compiler.hs` znajduje się implementacja.
+W katalogu *lib* znajduje się plik `runtime.bc` z funkcjami bibliotecznymi wraz ze źródłem `runtime.c`. 
 
 Do trzymania stanu używam monady **State**. Stan to krotka zawierająca środowisko (mapę identyfikatorów
 na lokacje), skład (mapę lokacji na rejestry), globalne stałe, obecny blok oraz różne liczniki używane np.
