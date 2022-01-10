@@ -8,7 +8,7 @@ import System.FilePath
 
 import Control.Monad (when)
 
-import Text.Printf
+import Text.Printf (printf)
 
 import Latte.Par
 import Latte.ErrM

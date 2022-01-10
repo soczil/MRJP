@@ -2,7 +2,7 @@ module Errors where
 
 import Latte.Abs
 
-import Text.Printf
+import Text.Printf (printf)
 
 data TCError = FunAlreadyDeclared Ident BNFC'Position
              | VarAlreadyDeclared Ident BNFC'Position
@@ -17,8 +17,6 @@ data TCError = FunAlreadyDeclared Ident BNFC'Position
              | AddOpError Type BNFC'Position
              | NoMainFunction
              | WrongMainType Type
-
-data CMPError = DivisionByZero
 
 errMsgPref :: BNFC'Position -> String
 errMsgPref p = case p of

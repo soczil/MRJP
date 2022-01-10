@@ -1,26 +1,21 @@
 module Compiler (compile) where
 
--- TODO: czy ja tego wgl potrzebuje????
-import Control.Monad.Except
 import Control.Monad.State
 
-import Data.Maybe
-import Data.List
+import Data.Maybe (fromMaybe)
+import Data.List (intercalate)
 import qualified Data.Map as M
 
-import Text.Printf
+import Text.Printf (printf)
 
 import Latte.Abs
-
-import Errors
 
 type Loc = Int
 type Reg = String
 type CMPEnv = M.Map Ident CMPInf
 type CMPStore = M.Map Loc Reg
-type CMPExcept = ExceptT String IO -- TODO: no chyba sie nie przyda
 type CMPState = (CMPEnv, CMPStore, Int, Int, Int, Int, String, String)
-type CMPMonad = StateT CMPState CMPExcept
+type CMPMonad = State CMPState
 type ExprRet = (String, String, Type)
 
 data CMPInf = VarInf (Type, Loc)
@@ -55,9 +50,8 @@ varToEnv id t reg = do
         M.insert locCounter reg store, 
         locCounter + 1, regCounter, strCounter, lblCounter, label, globals)
 
--- TODO: lepsza nazwa jol
-getCMPInf :: Ident -> CMPMonad (Type, Reg)
-getCMPInf id = do
+getVarStoreInf :: Ident -> CMPMonad (Type, Reg)
+getVarStoreInf id = do
     (env, store, _, _, _, _, _, _) <- get
     case env M.! id of
         VarInf (t, loc) -> do
@@ -89,7 +83,6 @@ toLLVMType (Str _) = "i8*"
 toLLVMType (Bool _) = "i1"
 toLLVMType (Void _) = "void"
 
--- TODO: wymyslic lepsza nazwe
 basicInstr :: String -> Type -> String -> String -> String -> String
 basicInstr reg t opCode = 
     printf "%s = %s %s %s, %s\n" reg opCode (toLLVMType t)
@@ -129,7 +122,7 @@ getDefaultValueExpr (Bool _) = ELitFalse BNFC'NoPosition
 
 getDefaultReturn :: Type -> CMPMonad String
 getDefaultReturn (Int _) = return "ret i32 0\n"
-getDefaultReturn (Str p) = compileStmt (Ret p (EString p "")) -- TODO: jeden pusty ziomek lepszy niz to lol
+getDefaultReturn (Str p) = compileStmt (Ret p (EString p ""))
 getDefaultReturn (Bool _) = return "ret i1 false\n"
 getDefaultReturn (Void _) = return "ret void\n"
 
@@ -297,7 +290,7 @@ getAddOpCode _ = "sub"
 
 getMulOpCode :: MulOp -> String
 getMulOpCode (Times _) = "mul"
-getMulOpCode (Div _) = "sdiv" -- TODO: moze udiv
+getMulOpCode (Div _) = "sdiv"
 getMulOpCode _ = "srem"
 
 getRelOpCodeAux :: RelOp -> String
@@ -388,15 +381,24 @@ getAppPrefix _ = do
     reg <- getFreeRegister
     return (printf "%s = " reg, reg)
 
+emptyString :: CMPMonad ExprRet
+emptyString = do
+    reg <- getFreeRegister
+    return (
+        printf "%s = bitcast [1 x i8]* @.str0 to i8*\n" reg,
+        reg, 
+        Str BNFC'NoPosition
+        )
+
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
-    (t, reg) <- getCMPInf id
+    (t, reg) <- getVarStoreInf id
     return ("", reg, t)
 compileExpr (ELitInt _ n) = return ("", show n, Int BNFC'NoPosition)
 compileExpr (ELitTrue _) = return ("", "true", Bool BNFC'NoPosition)
 compileExpr (ELitFalse _) = return ("", "false", Bool BNFC'NoPosition)
 compileExpr (EApp _ (Ident id) exprs) = do
-    (t, _) <- getCMPInf (Ident id)
+    (t, _) <- getVarStoreInf (Ident id)
     compiledExprs <- mapM compileExpr exprs
     let result = concatMap (\(result, _, _) -> result) compiledExprs
     let args = intercalate ", " $ foldr (\(_, reg, t) acc -> 
@@ -404,7 +406,7 @@ compileExpr (EApp _ (Ident id) exprs) = do
     (prefix, reg) <- getAppPrefix t
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
     return (result ++ instr, reg, t)
-compileExpr (EString _ s) = do
+compileExpr (EString _ s) = if s == "" then emptyString else do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
     let strLen = length s + 1
     let newGlobals = globals 
@@ -427,7 +429,7 @@ compileExpr (Not _ e) = do
     compileArithmeticExpr opCode newExpr e Nothing
 compileExpr (EMul _ e1 op e2) =
     compileArithmeticExpr (getMulOpCode op) e1 e2 Nothing
-compileExpr (EAdd _ e1 op e2) = compileAddExpr op e1 e2 -- TODO: optymalizacja?
+compileExpr (EAdd _ e1 op e2) = compileAddExpr op e1 e2
 compileExpr (ERel _ e1 op e2) =
     compileArithmeticExpr (getRelOpCode op) e1 e2 $ Just (Bool BNFC'NoPosition)
 compileExpr (EAnd _ e1 e2) = compileBoolExpr e1 e2 True
@@ -479,7 +481,7 @@ completeCode globals code = "declare void @printInt(i32)\n"
     ++ "declare i8* @malloc(i32)\n"
     ++ "declare i8* @strcpy(i8*, i8*)\n"
     ++ "declare i8* @strcat(i8*, i8*)\n\n"
-    -- ++ "@.str0 = private constant [1 x i8] c\"\00\"\n"
+    ++ "@.str0 = private constant [1 x i8] c\"\00\"\n"
     ++ globals ++ "\n"
     ++ code
 
@@ -493,9 +495,6 @@ compileEveryTopFun fundefs = do
 
 compile :: Program -> IO String
 compile (Program _ fundefs) = do
-    let runS = runStateT (compileEveryTopFun fundefs) emptyState
-    result <- runExceptT runS
-    case result of
-        Left err -> return ""
-        Right (compiledCode, (_, _, _, _, _, _, _, globals)) -> 
-            return $ completeCode globals compiledCode
+    let (code, (_, _, _, _, _, _, _, globals)) = 
+            runState (compileEveryTopFun fundefs) emptyState
+    return $ completeCode globals code
