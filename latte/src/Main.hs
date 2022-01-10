@@ -4,7 +4,8 @@ import System.IO
 import System.Environment (getArgs)
 import System.Process (system)
 import System.Exit (ExitCode(ExitSuccess, ExitFailure), exitWith, exitFailure)
-import System.FilePath
+import System.FilePath (dropExtension)
+import System.Directory (getCurrentDirectory)
 
 import Control.Monad (when)
 
@@ -29,9 +30,10 @@ runCompiler filePath = do
             result <- check prog
             finishTypechecker result
             compiledCode <- compile prog
+            dir <- getCurrentDirectory
             let llFilePath = dropExtension filePath ++ ".ll"
             let bcFilePath = dropExtension filePath ++ ".bc"
-            let runtimeFilePath = "lib/runtime.bc"
+            let runtimeFilePath = dir ++ "/lib/runtime.bc"
             writeFile llFilePath compiledCode
             ExitSuccess <- 
                 system $ printf "llvm-as %s -o %s" llFilePath bcFilePath
