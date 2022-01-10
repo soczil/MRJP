@@ -12,7 +12,7 @@ EXEC_FILE = latc_llvm
 
 .PHONY: all
 
-all: clean parser runtime main
+all: clean parser main
 
 parser: ${LATTE_PATH}
 	mkdir ${PARSER_BUILD} && \
@@ -23,11 +23,8 @@ parser: ${LATTE_PATH}
 	cd .. && \
 	rm -r -f ${PARSER_BUILD}
 
-runtime: ${RUNTIME_PATH}
-	clang -emit-llvm -c ${RUNTIME_PATH} -o lib/runtime.bc
-
 main: ${MAIN_PATH} ${TYPECHECKER} ${COMPILER} ${ERRORS}
 	${GHC} -isrc ${MAIN} -o ${EXEC_FILE}
 
 clean:
-	rm -r -f ${LATTE} src/*.o src/*.hi ${EXEC_FILE} lib/*.bc
+	rm -r -f ${LATTE} src/*.o src/*.hi ${EXEC_FILE}
