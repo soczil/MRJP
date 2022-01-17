@@ -148,6 +148,7 @@ compileStmt (Ass _ id e) = do
     (result, spot, _) <- compileExpr e
     updateVarReg id spot
     return result
+compileStmt (ArrAss _ id e1 e2) = undefined
 compileStmt (Incr _ id) = compileIncrDecrStmt id $ Plus BNFC'NoPosition
 compileStmt (Decr _ id) = compileIncrDecrStmt id $ Minus BNFC'NoPosition
 compileStmt (Ret _ e) = do
@@ -232,6 +233,7 @@ compileStmt (While _ e stmt) = do
         ++ compiledStmt
         ++ brInstrU condLabel
         ++ printLabel endLabel
+compileStmt (ForEach _ t varId arrId stmt) = undefined
 compileStmt (SExp _ e) = do
     (result, _, _) <- compileExpr e
     return result
@@ -406,6 +408,9 @@ compileExpr (EApp _ (Ident id) exprs) = do
     (prefix, reg) <- getAppPrefix t
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
     return (result ++ instr, reg, t)
+compileExpr (EArrRead _ id e) = undefined
+compileExpr (EArrNew _ t e) = undefined
+compileExpr (EArrLen _ id) = undefined
 compileExpr (EString _ s) = if s == "" then emptyString else do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
     let strLen = length s + 1

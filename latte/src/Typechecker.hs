@@ -75,6 +75,13 @@ checkStmt (Decl _ t itms) = mapM_ (checkItem t) itms
 checkStmt (Ass p id e) = do
     t <- getVarType id p
     assertExprType e t p
+checkStmt (ArrAss p id e1 e2) = do
+    assertArray id p
+    arrType <- getVarType id p
+    assertExprType e1 (Int p) p
+    elemType <- checkExpr e2
+    unless (checkType (Array p elemType) arrType) 
+        $ throwError $ WrongArrElemType id arrType elemType p
 checkStmt (Incr p id) = do
     actual <- getVarType id p
     assertType actual (Int p) p
@@ -106,13 +113,30 @@ checkStmt (CondElse p e stmt1 stmt2) = do
 checkStmt (While p e stmt) = do
     assertExprType e (Bool p) p
     checkStmt stmt
+checkStmt (ForEach p t varId arrId stmt) = do
+    assertArray arrId p
+    arrType <- getVarType arrId p
+    unless (checkType (Array p t) arrType) 
+        $ throwError $ WrongArrElemType arrId arrType t p
+    (env, usedVars, retType, ret) <- get
+    put (M.insert varId (VarInf t) env, usedVars, retType, ret)
+    checkStmt stmt
+    put (env, usedVars, retType, ret)
 checkStmt (SExp _ e) = void $ checkExpr e
+
+assertArray :: Ident -> BNFC'Position -> TCMonad ()
+assertArray id p = do
+    t <- getVarType id p
+    case t of
+        (Array _ _) -> return ()
+        _ -> throwError $ NotAnArray id p
 
 checkType :: Type -> Type -> Bool
 checkType (Int _) (Int _) = True
 checkType (Str _) (Str _) = True
 checkType (Bool _) (Bool _) = True
 checkType (Void _) (Void _) = True
+checkType (Array _ t1) (Array _ t2) = checkType t1 t2
 checkType _ _ = False
 
 assertType :: Type -> Type -> BNFC'Position -> TCMonad ()
@@ -136,6 +160,7 @@ posFromType (Int p) = p
 posFromType (Str p) = p
 posFromType (Bool p) = p
 posFromType (Void p) = p
+posFromType (Array p _) = p
 
 checkOpType :: Expr -> Expr -> Type -> TCMonad Type
 checkOpType e1 e2 t = do
@@ -181,6 +206,17 @@ checkExpr (EApp p id exprs) = do
     let argTypesAndExprs = zip argTypes exprs
     mapM_ (checkFunArg p) argTypesAndExprs
     return t
+checkExpr (EArrRead p id e) = do
+    assertArray id p
+    (Array _ t) <- getVarType id p
+    assertExprType e (Int p) p
+    return t
+checkExpr (EArrNew p t e) = do
+    assertExprType e (Int p) p
+    return (Array p t)
+checkExpr (EArrLen p id) = do
+    assertArray id p
+    return (Int p)
 checkExpr (EString p _) = return $ Str p
 checkExpr (Neg p e) = checkPrefixOpType e $ Int p
 checkExpr (Not p e) = checkPrefixOpType e $ Bool p

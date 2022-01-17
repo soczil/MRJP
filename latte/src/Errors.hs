@@ -17,6 +17,8 @@ data TCError = FunAlreadyDeclared Ident BNFC'Position
              | AddOpError Type BNFC'Position
              | NoMainFunction
              | WrongMainType Type
+             | WrongArrElemType Ident Type Type BNFC'Position
+             | NotAnArray Ident BNFC'Position
 
 errMsgPref :: BNFC'Position -> String
 errMsgPref p = case p of
@@ -31,6 +33,7 @@ showT (Int _) = "int"
 showT (Str _) = "string"
 showT (Bool _) = "boolean"
 showT (Void _) = "void"
+showT (Array _ t) = showT t ++ "[]"
 
 errMsg :: TCError -> String
 errMsg (FunAlreadyDeclared id p) = errMsgPref p ++
@@ -48,7 +51,7 @@ errMsg (WrongType act exp p) = errMsgPref p ++
 errMsg (WrongArgsNumber id act exp p) = errMsgPref p ++
     printf "function %s takes %d arguments instead of %d" (showId id) exp act
 errMsg (WrongArgType act exp p) = errMsgPref p ++
-    printf "found argument type %s instead of %s" (showT act) (showT exp)
+    printf "found argument of type %s instead of %s" (showT act) (showT exp)
 errMsg (WrongRetType act exp p) = errMsgPref p ++
     printf "found return type %s instead of %s" (showT act) (showT exp)
 errMsg (NoReturn id p) = errMsgPref p ++
@@ -59,3 +62,7 @@ errMsg NoMainFunction = errMsgPref BNFC'NoPosition ++
     "no main function"
 errMsg (WrongMainType t) = errMsgPref BNFC'NoPosition ++
     printf "function main is type %s instead of int" (showT t)
+errMsg (WrongArrElemType id arrType elemType p) = errMsgPref p ++
+    printf "array %s of type %s does not have elements of type %s" (showId id) (showT arrType) (showT elemType)
+errMsg (NotAnArray id p) = errMsgPref p ++
+    printf "%s is not an array" (showId id)

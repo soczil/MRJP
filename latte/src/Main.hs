@@ -29,16 +29,16 @@ runCompiler filePath = do
         Ok prog -> do
             result <- check prog
             finishTypechecker result
-            compiledCode <- compile prog
-            dir <- getCurrentDirectory
-            let llFilePath = dropExtension filePath ++ ".ll"
-            let bcFilePath = dropExtension filePath ++ ".bc"
-            let runtimeFilePath = dir ++ "/lib/runtime.bc"
-            writeFile llFilePath compiledCode
-            ExitSuccess <- 
-                system $ printf "llvm-as %s -o %s" llFilePath bcFilePath
-            ExitSuccess <- 
-                system $ printf "llvm-link %s %s -o %s" bcFilePath runtimeFilePath bcFilePath
+            -- compiledCode <- compile prog
+            -- dir <- getCurrentDirectory
+            -- let llFilePath = dropExtension filePath ++ ".ll"
+            -- let bcFilePath = dropExtension filePath ++ ".bc"
+            -- let runtimeFilePath = dir ++ "/lib/runtime.bc"
+            -- writeFile llFilePath compiledCode
+            -- ExitSuccess <- 
+            --     system $ printf "llvm-as %s -o %s" llFilePath bcFilePath
+            -- ExitSuccess <- 
+            --     system $ printf "llvm-link %s %s -o %s" bcFilePath runtimeFilePath bcFilePath
             return ()
         Bad msg -> do
             hPutStrLn stderr $ "ERROR\n" ++ msg
