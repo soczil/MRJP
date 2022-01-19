@@ -17,7 +17,7 @@ type TCState = (TCEnv, TCUsedVars, Type, Bool)
 type TCMonad = StateT TCState TCExcept
 
 data TCInf = VarInf Type
-           | FunInf (Type, [Type]) 
+           | FunInf (Type, [Type])
     deriving Eq
 
 data CondExprVal = CondTrue | CondFalse | CondUndefined deriving (Eq)

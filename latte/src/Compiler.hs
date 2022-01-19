@@ -20,6 +20,7 @@ type ExprRet = (String, Reg, Type)
 
 data CMPInf = VarInf (Type, Loc)
             | FunInf Type
+            | ClsInf (M.Map Ident (Type, Int))
 
 emptyState :: CMPState
 emptyState = (M.empty, M.empty, 1, 1, 1, 0, "", "")
@@ -50,12 +51,18 @@ varToEnv id t reg = do
         M.insert locCounter reg store, 
         locCounter + 1, regCounter, strCounter, lblCounter, label, globals)
 
+getClassInf :: Ident -> CMPMonad (M.Map Ident (Type, Int))
+getClassInf id = do
+    (env, _, _, _, _, _, _, _) <- get
+    case env M.! id of
+        (ClsInf m) -> return m
+        _ -> return M.empty
+
 getVarStoreInf :: Ident -> CMPMonad (Type, Reg)
 getVarStoreInf id = do
     (env, store, _, _, _, _, _, _) <- get
     case env M.! id of
-        VarInf (t, loc) -> do
-            return (t, store M.! loc)
+        VarInf (t, loc) -> return (t, store M.! loc)
         FunInf t -> return (t, "")
 
 getVarInf :: Ident -> CMPMonad (Type, Loc)
@@ -82,6 +89,7 @@ toLLVMType (Int _) = "i32"
 toLLVMType (Str _) = "i8*"
 toLLVMType (Bool _) = "i1"
 toLLVMType (Void _) = "void"
+toLLVMType (Class _ (Ident id)) = printf "%%struct.%s*" id
 
 basicInstr :: String -> Type -> String -> String -> String -> String
 basicInstr reg t opCode = 
@@ -119,12 +127,14 @@ getDefaultValueExpr :: Type -> Expr
 getDefaultValueExpr (Int _) = ELitInt BNFC'NoPosition 0
 getDefaultValueExpr (Str _) = EString BNFC'NoPosition ""
 getDefaultValueExpr (Bool _) = ELitFalse BNFC'NoPosition
+getDefaultValueExpr (Class _ id) = ENull BNFC'NoPosition id
 
 getDefaultReturn :: Type -> CMPMonad String
 getDefaultReturn (Int _) = return "ret i32 0\n"
 getDefaultReturn (Str p) = compileStmt (Ret p (EString p ""))
 getDefaultReturn (Bool _) = return "ret i1 false\n"
 getDefaultReturn (Void _) = return "ret void\n"
+getDefaultReturn (Class _ (Ident id)) = return $ printf "ret %%struct.%s* null" id
 
 compileItem :: Type -> Item -> CMPMonad String
 compileItem t (NoInit p id) = compileItem t (Init p id (getDefaultValueExpr t))
@@ -149,6 +159,16 @@ compileStmt (Ass _ id e) = do
     updateVarReg id spot
     return result
 compileStmt (ArrAss _ id e1 e2) = undefined
+compileStmt (AtrAss _ id fld e) = do
+    (result, spot, _) <- compileExpr e
+    (t, reg) <- getVarStoreInf id
+    let (Class _ (Ident cls)) = t
+    clsInf <- getClassInf (Ident cls)
+    let (fldType, fldCount) = clsInf M.! fld
+    newReg <- getFreeRegister
+    return $ result
+        ++ printf "%s = getelementptr inbounds %%struct.%s, %%struct.%s* %s, i32 0, i32 %d\n" newReg cls cls reg fldCount 
+        ++ printf "store %s %s, %s* %s\n" (toLLVMType fldType) spot (toLLVMType fldType) newReg
 compileStmt (Incr _ id) = compileIncrDecrStmt id $ Plus BNFC'NoPosition
 compileStmt (Decr _ id) = compileIncrDecrStmt id $ Minus BNFC'NoPosition
 compileStmt (Ret _ e) = do
@@ -173,7 +193,7 @@ compileStmt (CondElse _ e stmt1 stmt2) = do
     let vars = foldr (\(id, inf) acc ->
             case inf of
                 VarInf _ -> id:acc
-                FunInf _ -> acc) [] $ M.assocs env
+                _ -> acc) [] $ M.assocs env
 
     phiOptions <- mapM (getPhiOptionForCond store thenStore elseStore thenLabel elseLabel) vars
     return $ brInstrU preLabel
@@ -200,7 +220,7 @@ compileStmt (While _ e stmt) = do
     let vars = foldr (\(id, inf) acc ->
             case inf of
                 VarInf _ -> id:acc
-                FunInf _ -> acc) [] $ M.assocs env
+                _ -> acc) [] $ M.assocs env
 
     phiInstrCount <- mapM (isPhiOption store newStore) vars
     let phiInstrNum = sum phiInstrCount
@@ -392,6 +412,10 @@ emptyString = do
         Str BNFC'NoPosition
         )
 
+getelementptrInstr :: Reg -> String -> String -> Int -> String
+getelementptrInstr reg cls = 
+    printf "%s = getelementptr inbounds %%struct.%s, %%struct.%s* %s, i32 0, i32 %d\n" reg cls cls
+
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
     (t, reg) <- getVarStoreInf id
@@ -399,6 +423,7 @@ compileExpr (EVar _ id) = do
 compileExpr (ELitInt _ n) = return ("", show n, Int BNFC'NoPosition)
 compileExpr (ELitTrue _) = return ("", "true", Bool BNFC'NoPosition)
 compileExpr (ELitFalse _) = return ("", "false", Bool BNFC'NoPosition)
+compileExpr (ENull _ id) = return ("", "null", Class BNFC'NoPosition id)
 compileExpr (EApp _ (Ident id) exprs) = do
     (t, _) <- getVarStoreInf (Ident id)
     compiledExprs <- mapM compileExpr exprs
@@ -411,6 +436,20 @@ compileExpr (EApp _ (Ident id) exprs) = do
 compileExpr (EArrRead _ id e) = undefined
 compileExpr (EArrNew _ t e) = undefined
 compileExpr (EArrLen _ id) = undefined
+compileExpr (EClsRead _ id fld) = do
+    (t, reg) <- getVarStoreInf id
+    let (Class _ (Ident cls)) = t
+    clsInf <- getClassInf (Ident cls)
+    let (fldType, fldCount) = clsInf M.! fld
+    ptrReg <- getFreeRegister
+    resultReg <- getFreeRegister
+    return (
+        getelementptrInstr ptrReg cls reg fldCount
+        ++ printf "%s = load %s, %s* %s\n" resultReg (toLLVMType fldType) (toLLVMType fldType) ptrReg,
+        resultReg, fldType)
+compileExpr (ENewCls _ (Ident id)) = do
+    reg <- getFreeRegister
+    return (printf "%s = alloca %%struct.%s\n" reg id, reg, Class BNFC'NoPosition (Ident id))
 compileExpr (EString _ s) = if s == "" then emptyString else do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
     let strLen = length s + 1
@@ -443,18 +482,28 @@ compileExpr (EOr _ e1 e2) = compileBoolExpr e1 e2 False
 compileArg :: Arg -> String
 compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toLLVMType t) id
 
-funToEnv :: TopDef -> CMPMonad ()
-funToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ do
+compileAtr :: Atr -> String
+compileAtr (Atr _ t _) = toLLVMType t
+
+topDefToEnv :: TopDef -> CMPMonad ()
+topDefToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
     put (
         M.insert id (FunInf t) env, 
+        store, locCounter, regCounter, strCounter, lblCounter, label, globals)
+topDefToEnv (ClsDef _ id atrs) = do
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    let (atrList, _) = foldl (\(l, c) (Atr _ atrType atrId) -> 
+            ((atrId, (atrType, c)):l, c + 1)) ([], 0) atrs
+    put (
+        M.insert id (ClsInf (M.fromList atrList)) env,
         store, locCounter, regCounter, strCounter, lblCounter, label, globals)
 
 funArgToEnv :: Arg -> CMPMonad ()
 funArgToEnv (Arg _ t (Ident id)) = varToEnv (Ident id) t ("%" ++ id)
 
-compileTopFun :: CMPEnv -> TopDef -> CMPMonad String
-compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
+compileTopDef :: CMPEnv -> TopDef -> CMPMonad String
+compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
     (_, _, _, _, strCounter, _, _, globals) <- get
     put (initialEnv, M.empty, 1, 1, strCounter, 0, "entry", globals)
     mapM_ funArgToEnv args
@@ -463,6 +512,12 @@ compileTopFun initialEnv (FnDef _ t (Ident id) args block) = do
     ret <- getDefaultReturn t
     return $ printf "define %s @%s(%s) {\n%s\n%s}\n\n"
         (toLLVMType t) id compiledArgs compiledCode ret
+compileTopDef initialEnv (ClsDef _ (Ident id) atrs) = do
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    let compiledAtrs = intercalate ", " $ map compileAtr atrs
+    let newGlobals = printf "%%struct.%s = type { %s }\n" id compiledAtrs ++ globals
+    put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals)
+    return ""
 
 predefinedFuns :: [(Ident, CMPInf)]
 predefinedFuns = [
@@ -489,10 +544,10 @@ completeCode globals code = "declare void @printInt(i32)\n"
 
 compileEveryTopFun :: [TopDef] -> CMPMonad String
 compileEveryTopFun fundefs = do
-    mapM_ funToEnv fundefs
+    mapM_ topDefToEnv fundefs
     (env, _, _, _, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
-    result <- mapM (compileTopFun initialEnv) fundefs
+    result <- mapM (compileTopDef initialEnv) fundefs
     return $ concat result
 
 compile :: Program -> IO String

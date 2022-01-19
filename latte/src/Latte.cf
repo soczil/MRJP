@@ -6,11 +6,17 @@ Program.   Program ::= [TopDef] ;
 
 FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
 
+ClsDef.    TopDef ::= "class" Ident "{" [Atr] "}" ;
+
 separator nonempty TopDef "" ;
 
 Arg. 	   Arg ::= Type Ident;
 
+Atr.       Atr ::= Type Ident ";" ;
+
 separator  Arg "," ;
+
+separator  Atr "" ;
 
 -- statements ----------------------------------------------
 
@@ -33,6 +39,8 @@ separator nonempty Item "," ;
 Ass.       Stmt ::= Ident "=" Expr  ";" ;
 
 ArrAss.    Stmt ::= Ident "[" Expr "]" "=" Expr ";" ; 
+
+AtrAss.    Stmt ::= Ident "." Ident "=" Expr ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
 
@@ -64,6 +72,8 @@ Void.      Type ::= "void" ;
 
 Array.     Type ::= Type "[]" ;
 
+Class.     Type ::= Ident ;
+
 internal   Fun. Type ::= Type "(" [Type] ")" ;
 
 separator  Type "," ;
@@ -78,6 +88,8 @@ ELitTrue.  Expr6 ::= "true" ;
 
 ELitFalse. Expr6 ::= "false" ;
 
+ENull.     Expr6 ::= "(" Ident ")" "null" ;
+
 EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
 
 EArrRead.  Expr6 ::= Ident "[" Expr "]" ;
@@ -85,6 +97,10 @@ EArrRead.  Expr6 ::= Ident "[" Expr "]" ;
 EArrNew.   Expr6 ::= "new" Type "[" Expr "]" ;
 
 EArrLen.   Expr6 ::= Ident ".length" ;
+
+EClsRead.  Expr6 ::= Ident "." Ident ;
+
+ENewCls.   Expr6 ::= "new" Ident ;
 
 EString.   Expr6 ::= String ;
 
