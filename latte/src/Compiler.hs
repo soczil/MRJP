@@ -163,26 +163,9 @@ compileStmt (Decl _ t itms) = do
     return $ concat result
 compileStmt (Ass _ id e) = do
     (result, spot, t) <- compileExpr e
-    -- case t of
-    --     (Array _ arrType) -> do
-    --         (_, reg) <- getVarStoreInf id
-    --         return $ result
-    --             ++ printf "store %%struct.Array* %s, %%struct.Array** %s" spot reg
-    --     _ -> do
     updateVarReg id spot
     return result
 compileStmt (ArrAss _ id e1 e2) = do
-    -- (result1, idx, _) <- compileExpr e1
-    -- (result2, val, _) <- compileExpr e2
-    -- (t, _) <- getVarStoreInf id
-    -- let (Array _ arrType) = t
-    -- (result3, arr, _) <- compileExpr (EClsRead BNFC'NoPosition id (Ident "arr"))
-    -- reg <- getFreeRegister
-    -- ptr <- getFreeRegister
-    -- return $ result1 ++ result2 ++ result3
-    --     ++ printf "%s = bitcast i8* %s to %s*\n" reg arr (toLLVMType arrType)
-    --     ++ printf "%s = getelementptr inbounds %s, %s* %s, %s %s\n" ptr (toLLVMType arrType) (toLLVMType arrType) reg (toLLVMType arrType) idx
-    --     ++ printf "store %s %s, %s* %s\n" (toLLVMType arrType) val (toLLVMType arrType) ptr
     (result1, idx, _) <- compileExpr e1
     (result2, val, _) <- compileExpr e2
     (arrType, structReg) <- getVarStoreInf id
@@ -527,19 +510,6 @@ compileExpr (EApp _ (Ident id) exprs) = do
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toReturnType t) id args
     return (result ++ instr, reg, t)
 compileExpr (EArrRead _ id e) = do
-    -- (result1, arr, _) <- compileExpr (EClsRead BNFC'NoPosition id (Ident "arr"))
-    -- (result2, idx, _) <- compileExpr e
-    -- (t, _) <- getVarInf id
-    -- let (Array _ arrType) = t
-    -- reg <- getFreeRegister
-    -- ptr <- getFreeRegister
-    -- resultReg <- getFreeRegister
-    -- return (
-    --     result1 ++ result2
-    --     ++ printf "%s = bitcast i8* %s to %s*\n" reg arr (toLLVMType arrType)
-    --     ++ printf "%s = getelementptr %s, %s* %s, %s %s\n" ptr (toLLVMType arrType) (toLLVMType arrType) reg (toLLVMType arrType) idx
-    --     ++ printf "%s = load %s, %s* %s\n" resultReg (toLLVMType arrType) (toLLVMType arrType) ptr,
-    --     resultReg, arrType)
     (result, idx, _) <- compileExpr e
     (arrType, structReg) <- getVarStoreInf id
     let (Array _ t) = arrType
@@ -556,26 +526,6 @@ compileExpr (EArrRead _ id e) = do
         ++ printf "%s = load %s, %s* %s\n" element (toLLVMType t) (toLLVMType t) elementPtr,
         element, t)
 compileExpr (EArrNew p t e) = do
-    -- (result, spot, _) <- compileExpr e
-    -- resultReg <- getFreeRegister
-    -- typeSize <- getFreeRegister
-    -- typeSizeResult <- getFreeRegister
-    -- size <- getFreeRegister
-    -- arrReg <- getFreeRegister
-    -- lenPtr <- getFreeRegister
-    -- arrPtr <- getFreeRegister
-    -- return (
-    --     result
-    --     ++ allocaInstr resultReg "Array"
-    --     ++ printf "%s = getelementptr %s, %s* null, i32 1\n" typeSize (toLLVMType t) (toLLVMType t)
-    --     ++ printf "%s = ptrtoint %s* %s to i32\n" typeSizeResult (toLLVMType t) typeSize
-    --     ++ printf "%s = mul i32 %s, %s\n" size spot typeSizeResult
-    --     ++ callInstr arrReg (Str BNFC'NoPosition) "malloc" [("", size, Int BNFC'NoPosition)]
-    --     ++ getelementptrInstr lenPtr "Array" resultReg (show 0)
-    --     ++ storeInstr (Int BNFC'NoPosition) spot lenPtr
-    --     ++ getelementptrInstr arrPtr "Array" resultReg (show 1)
-    --     ++ storeInstr (Str BNFC'NoPosition) arrReg arrPtr,
-    --     resultReg, Array BNFC'NoPosition t)
     let arrType = Array p t
     (result1, structSize) <- calculateTypeSize arrType
     structReg <- getFreeRegister
