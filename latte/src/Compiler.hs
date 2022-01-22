@@ -90,7 +90,7 @@ toLLVMType (Str _) = "i8*"
 toLLVMType (Bool _) = "i1"
 toLLVMType (Void _) = "void"
 toLLVMType (Array _ t) = printf "{i32, %s*}" (toLLVMType t)
-toLLVMType (Class _ (Ident id)) = printf "%%struct.%s*" id
+toLLVMType (Class _ (Ident id)) = printf "%%class.%s*" id
 
 toReturnType :: Type -> String
 toReturnType (Array p t) = toLLVMType (Array p t) ++ "*"
@@ -141,7 +141,7 @@ getDefaultReturn (Str p) = compileStmt (Ret p (EString p ""))
 getDefaultReturn (Bool _) = return "ret i1 false\n"
 getDefaultReturn (Void _) = return "ret void\n"
 getDefaultReturn (Array _ t) = return $ printf "ret {i32, %s*}* null\n" (toLLVMType t)
-getDefaultReturn (Class _ (Ident id)) = return $ printf "ret %%struct.%s* null\n" id
+getDefaultReturn (Class _ (Ident id)) = return $ printf "ret %%class.%s* null\n" id
 
 compileItem :: Type -> Item -> CMPMonad String
 compileItem t (NoInit p id) = compileItem t (Init p id (getDefaultValueExpr t))
@@ -168,14 +168,14 @@ compileStmt (Ass _ id e) = do
 compileStmt (ArrAss _ id e1 e2) = do
     (result1, idx, _) <- compileExpr e1
     (result2, val, _) <- compileExpr e2
-    (arrType, structReg) <- getVarStoreInf id
+    (arrType, classReg) <- getVarStoreInf id
     let (Array _ t) = arrType
     arrPtr <- getFreeRegister
     arr <- getFreeRegister
     element <- getFreeRegister
     return $ result1 ++ result2
         ++ printf "%s = getelementptr %s, %s* %s, i32 0, i32 1\n"
-            arrPtr (toLLVMType arrType) (toLLVMType arrType) structReg
+            arrPtr (toLLVMType arrType) (toLLVMType arrType) classReg
         ++ printf "%s = load %s*, %s** %s\n" arr (toLLVMType t) (toLLVMType t) arrPtr
         ++ printf "%s = getelementptr %s, %s* %s, %s %s\n"
             element (toLLVMType t) (toLLVMType t) arr (toLLVMType t) idx
@@ -188,7 +188,7 @@ compileStmt (AtrAss _ id fld e) = do
     let (fldType, fldCount) = clsInf M.! fld
     newReg <- getFreeRegister
     return $ result
-        ++ printf "%s = getelementptr inbounds %%struct.%s, %%struct.%s* %s, i32 0, i32 %d\n" newReg cls cls reg fldCount 
+        ++ printf "%s = getelementptr inbounds %%class.%s, %%class.%s* %s, i32 0, i32 %d\n" newReg cls cls reg fldCount 
         ++ printf "store %s %s, %s* %s\n" (toLLVMType fldType) spot (toLLVMType fldType) newReg
 compileStmt (Incr _ id) = compileIncrDecrStmt id $ Plus BNFC'NoPosition
 compileStmt (Decr _ id) = compileIncrDecrStmt id $ Minus BNFC'NoPosition
@@ -453,10 +453,10 @@ emptyString = do
 
 getelementptrInstr :: Reg -> String -> String -> String -> String
 getelementptrInstr reg cls = 
-    printf "%s = getelementptr inbounds %%struct.%s, %%struct.%s* %s, i32 0, i32 %s\n" reg cls cls
+    printf "%s = getelementptr inbounds %%class.%s, %%class.%s* %s, i32 0, i32 %s\n" reg cls cls
 
 allocaInstr :: Reg -> String -> String
-allocaInstr = printf "%s = alloca %%struct.%s\n"
+allocaInstr = printf "%s = alloca %%class.%s\n"
 
 storeInstr :: Type -> Reg -> Reg -> String
 storeInstr t reg1 reg2 = do
@@ -483,12 +483,12 @@ bitcastInstr result t1 reg t2 =
 
 compileArrayLengthExpr :: Ident -> CMPMonad ExprRet
 compileArrayLengthExpr id = do
-    (arrType, structReg) <- getVarStoreInf id
+    (arrType, classReg) <- getVarStoreInf id
     lenPtr <- getFreeRegister
     len <- getFreeRegister
     return (
         printf "%s = getelementptr %s, %s* %s, i32 0, i32 0\n"
-            lenPtr (toLLVMType arrType) (toLLVMType arrType) structReg
+            lenPtr (toLLVMType arrType) (toLLVMType arrType) classReg
         ++ printf "%s = load i32, i32* %s\n" len lenPtr,
         len, Int BNFC'NoPosition)
 
@@ -511,7 +511,7 @@ compileExpr (EApp _ (Ident id) exprs) = do
     return (result ++ instr, reg, t)
 compileExpr (EArrRead _ id e) = do
     (result, idx, _) <- compileExpr e
-    (arrType, structReg) <- getVarStoreInf id
+    (arrType, classReg) <- getVarStoreInf id
     let (Array _ t) = arrType
     arrPtr <- getFreeRegister
     arr <- getFreeRegister
@@ -519,7 +519,7 @@ compileExpr (EArrRead _ id e) = do
     element <- getFreeRegister
     return (result
         ++ printf "%s = getelementptr %s, %s* %s, i32 0, i32 1\n"
-            arrPtr (toLLVMType arrType) (toLLVMType arrType) structReg
+            arrPtr (toLLVMType arrType) (toLLVMType arrType) classReg
         ++ printf "%s = load %s*, %s** %s\n" arr (toLLVMType t) (toLLVMType t) arrPtr
         ++ printf "%s = getelementptr %s, %s* %s, %s %s\n" 
             elementPtr (toLLVMType t) (toLLVMType t) arr (toLLVMType t) idx
@@ -527,9 +527,9 @@ compileExpr (EArrRead _ id e) = do
         element, t)
 compileExpr (EArrNew p t e) = do
     let arrType = Array p t
-    (result1, structSize) <- calculateTypeSize arrType
-    structReg <- getFreeRegister
-    structResult <- getFreeRegister
+    (result1, classSize) <- calculateTypeSize arrType
+    classReg <- getFreeRegister
+    classResult <- getFreeRegister
     (result2, len, _) <- compileExpr e
     (result3, typeSize) <- calculateTypeSize t
     arrSize <- getFreeRegister
@@ -539,19 +539,19 @@ compileExpr (EArrNew p t e) = do
     arrPtr <- getFreeRegister
     return (
         result1
-        ++ callInstr structReg (Str p) "malloc" [("", structSize, Int p)]
-        ++ bitcastInstr structResult (Str p) structReg arrType
+        ++ callInstr classReg (Str p) "malloc" [("", classSize, Int p)]
+        ++ bitcastInstr classResult (Str p) classReg arrType
         ++ result2 ++ result3
         ++ basicInstr arrSize (Int p) "mul" typeSize len
         ++ callInstr arrReg (Str p) "malloc" [("", arrSize, Int p)]
         ++ bitcastInstr arrResult (Str p) arrReg t
         ++ printf "%s = getelementptr %s, %s* %s, i32 0, i32 0\n" 
-            lenPtr (toLLVMType arrType) (toLLVMType arrType) structResult
+            lenPtr (toLLVMType arrType) (toLLVMType arrType) classResult
         ++ printf "store i32 %s, i32* %s\n" len lenPtr
         ++ printf "%s = getelementptr %s, %s* %s, i32 0, i32 1\n" 
-            arrPtr (toLLVMType arrType) (toLLVMType arrType) structResult
+            arrPtr (toLLVMType arrType) (toLLVMType arrType) classResult
         ++ printf "store %s* %s, %s** %s\n" (toLLVMType t) arrResult (toLLVMType t) arrPtr,
-        structResult, arrType)
+        classResult, arrType)
 compileExpr (EClsRead _ id fld) = do
     (t, reg) <- getVarStoreInf id
     case t of
@@ -569,7 +569,7 @@ compileExpr (EClsRead _ id fld) = do
                 resultReg, fldType)
 compileExpr (ENewCls _ (Ident id)) = do
     reg <- getFreeRegister
-    return (printf "%s = alloca %%struct.%s\n" reg id, reg, Class BNFC'NoPosition (Ident id))
+    return (printf "%s = alloca %%class.%s\n" reg id, reg, Class BNFC'NoPosition (Ident id))
 compileExpr (EString _ s) = if s == "" then emptyString else do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
     let strLen = length s + 1
@@ -635,7 +635,7 @@ compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
 compileTopDef initialEnv (ClsDef _ (Ident id) atrs) = do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
     let compiledAtrs = intercalate ", " $ map compileAtr atrs
-    let newGlobals = printf "%%struct.%s = type { %s }\n" id compiledAtrs ++ globals
+    let newGlobals = printf "%%class.%s = type { %s }\n" id compiledAtrs ++ globals
     put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals)
     return ""
 
@@ -659,18 +659,12 @@ completeCode globals code = "declare void @printInt(i32)\n"
     ++ "declare i8* @strcpy(i8*, i8*)\n"
     ++ "declare i8* @strcat(i8*, i8*)\n\n"
     ++ "@.str0 = private constant [1 x i8] c\"\00\"\n"
-    ++ "%struct.Array = type { i32, i8* }"
     ++ globals ++ "\n"
     ++ code
 
 compileEveryTopDef :: [TopDef] -> CMPMonad String
 compileEveryTopDef topdefs = do
     mapM_ topDefToEnv topdefs
-    let pos = BNFC'NoPosition
-    topDefToEnv (ClsDef pos (Ident "Array") [
-        Atr pos (Int pos) (Ident "length"),
-        Atr pos (Str pos) (Ident "arr")
-        ])
     (env, _, _, _, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
     result <- mapM (compileTopDef initialEnv) topdefs
