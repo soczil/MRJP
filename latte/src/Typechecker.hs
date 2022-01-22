@@ -214,9 +214,9 @@ checkExpr (EArrRead p id e) = do
 checkExpr (EArrNew p t e) = do
     assertExprType e (Int p) p
     return (Array p t)
-checkExpr (EArrLen p id) = do
-    assertArray id p
-    return (Int p)
+-- checkExpr (EArrLen p id) = do
+--     assertArray id p
+--     return (Int p)
 checkExpr (EString p _) = return $ Str p
 checkExpr (Neg p e) = checkPrefixOpType e $ Int p
 checkExpr (Not p e) = checkPrefixOpType e $ Bool p

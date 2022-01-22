@@ -89,9 +89,14 @@ toLLVMType (Int _) = "i32"
 toLLVMType (Str _) = "i8*"
 toLLVMType (Bool _) = "i1"
 toLLVMType (Void _) = "void"
+toLLVMType (Array _ t) = printf "{i32, %s*}" (toLLVMType t)
 toLLVMType (Class _ (Ident id)) = printf "%%struct.%s*" id
 
-basicInstr :: String -> Type -> String -> String -> String -> String
+toReturnType :: Type -> String
+toReturnType (Array p t) = toLLVMType (Array p t) ++ "*"
+toReturnType t = toLLVMType t
+
+basicInstr :: Reg -> Type -> String -> Reg -> Reg -> String
 basicInstr reg t opCode = 
     printf "%s = %s %s %s, %s\n" reg opCode (toLLVMType t)
 
@@ -104,7 +109,7 @@ brInstrU = printf "br label %%%s\n"
 printLabel :: String -> String
 printLabel = printf "%s:\n"
 
-callInstr :: String -> Type -> String -> [ExprRet] -> String
+callInstr :: Reg -> Type -> String -> [ExprRet] -> String
 callInstr reg t fun args = do
     let compiledArgs = intercalate ", " $ foldr (\(_, reg, argType) acc -> 
             (toLLVMType argType ++ " " ++ reg):acc) [] args
@@ -127,6 +132,7 @@ getDefaultValueExpr :: Type -> Expr
 getDefaultValueExpr (Int _) = ELitInt BNFC'NoPosition 0
 getDefaultValueExpr (Str _) = EString BNFC'NoPosition ""
 getDefaultValueExpr (Bool _) = ELitFalse BNFC'NoPosition
+getDefaultValueExpr (Array _ _) = ENull BNFC'NoPosition (Ident "Array")
 getDefaultValueExpr (Class _ id) = ENull BNFC'NoPosition id
 
 getDefaultReturn :: Type -> CMPMonad String
@@ -134,7 +140,8 @@ getDefaultReturn (Int _) = return "ret i32 0\n"
 getDefaultReturn (Str p) = compileStmt (Ret p (EString p ""))
 getDefaultReturn (Bool _) = return "ret i1 false\n"
 getDefaultReturn (Void _) = return "ret void\n"
-getDefaultReturn (Class _ (Ident id)) = return $ printf "ret %%struct.%s* null" id
+getDefaultReturn (Array _ t) = return $ printf "ret {i32, %s*}* null\n" (toLLVMType t)
+getDefaultReturn (Class _ (Ident id)) = return $ printf "ret %%struct.%s* null\n" id
 
 compileItem :: Type -> Item -> CMPMonad String
 compileItem t (NoInit p id) = compileItem t (Init p id (getDefaultValueExpr t))
@@ -155,10 +162,41 @@ compileStmt (Decl _ t itms) = do
     result <- mapM (compileItem t) itms
     return $ concat result
 compileStmt (Ass _ id e) = do
-    (result, spot, _) <- compileExpr e
+    (result, spot, t) <- compileExpr e
+    -- case t of
+    --     (Array _ arrType) -> do
+    --         (_, reg) <- getVarStoreInf id
+    --         return $ result
+    --             ++ printf "store %%struct.Array* %s, %%struct.Array** %s" spot reg
+    --     _ -> do
     updateVarReg id spot
     return result
-compileStmt (ArrAss _ id e1 e2) = undefined
+compileStmt (ArrAss _ id e1 e2) = do
+    -- (result1, idx, _) <- compileExpr e1
+    -- (result2, val, _) <- compileExpr e2
+    -- (t, _) <- getVarStoreInf id
+    -- let (Array _ arrType) = t
+    -- (result3, arr, _) <- compileExpr (EClsRead BNFC'NoPosition id (Ident "arr"))
+    -- reg <- getFreeRegister
+    -- ptr <- getFreeRegister
+    -- return $ result1 ++ result2 ++ result3
+    --     ++ printf "%s = bitcast i8* %s to %s*\n" reg arr (toLLVMType arrType)
+    --     ++ printf "%s = getelementptr inbounds %s, %s* %s, %s %s\n" ptr (toLLVMType arrType) (toLLVMType arrType) reg (toLLVMType arrType) idx
+    --     ++ printf "store %s %s, %s* %s\n" (toLLVMType arrType) val (toLLVMType arrType) ptr
+    (result1, idx, _) <- compileExpr e1
+    (result2, val, _) <- compileExpr e2
+    (arrType, structReg) <- getVarStoreInf id
+    let (Array _ t) = arrType
+    arrPtr <- getFreeRegister
+    arr <- getFreeRegister
+    element <- getFreeRegister
+    return $ result1 ++ result2
+        ++ printf "%s = getelementptr %s, %s* %s, i32 0, i32 1\n"
+            arrPtr (toLLVMType arrType) (toLLVMType arrType) structReg
+        ++ printf "%s = load %s*, %s** %s\n" arr (toLLVMType t) (toLLVMType t) arrPtr
+        ++ printf "%s = getelementptr %s, %s* %s, %s %s\n"
+            element (toLLVMType t) (toLLVMType t) arr (toLLVMType t) idx
+        ++ printf "store %s %s, %s* %s\n" (toLLVMType t) val (toLLVMType t) element
 compileStmt (AtrAss _ id fld e) = do
     (result, spot, _) <- compileExpr e
     (t, reg) <- getVarStoreInf id
@@ -174,7 +212,7 @@ compileStmt (Decr _ id) = compileIncrDecrStmt id $ Minus BNFC'NoPosition
 compileStmt (Ret _ e) = do
     (result, reg, t) <- compileExpr e
     _ <- getFreeRegister
-    return $ result ++ printf "ret %s %s\n" (toLLVMType t) reg
+    return $ result ++ printf "ret %s %s\n" (toReturnType t) reg
 compileStmt (VRet _) = do
     _ <- getFreeRegister
     return "ret void\n"
@@ -253,7 +291,25 @@ compileStmt (While _ e stmt) = do
         ++ compiledStmt
         ++ brInstrU condLabel
         ++ printLabel endLabel
-compileStmt (ForEach _ t varId arrId stmt) = undefined
+compileStmt (ForEach _ t varId arrId stmt) = do
+    let p = BNFC'NoPosition
+    let iterator = "arr.iterate"
+    let lengthExpr = EClsRead p arrId (Ident "length")
+    let condExpr = ERel p (EVar p (Ident iterator)) (LTH p) lengthExpr
+    let body = [
+            Ass p varId (EArrRead p arrId (EVar p (Ident iterator))), 
+            stmt, 
+            Incr p (Ident iterator)
+            ]
+    (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals) <- get
+    compiledVarDecl <- compileItem t (NoInit p varId)
+    compiledIteratorDecl <- compileItem (Int p) (Init p (Ident iterator) (ELitInt p 0))
+    compiledStmt <- compileStmt (While p condExpr (BStmt p (Block p body))) 
+    (_, _, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals) <- get
+    put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals)
+    return $ compiledVarDecl
+        ++ compiledIteratorDecl
+        ++ compiledStmt
 compileStmt (SExp _ e) = do
     (result, _, _) <- compileExpr e
     return result
@@ -412,9 +468,46 @@ emptyString = do
         Str BNFC'NoPosition
         )
 
-getelementptrInstr :: Reg -> String -> String -> Int -> String
+getelementptrInstr :: Reg -> String -> String -> String -> String
 getelementptrInstr reg cls = 
-    printf "%s = getelementptr inbounds %%struct.%s, %%struct.%s* %s, i32 0, i32 %d\n" reg cls cls
+    printf "%s = getelementptr inbounds %%struct.%s, %%struct.%s* %s, i32 0, i32 %s\n" reg cls cls
+
+allocaInstr :: Reg -> String -> String
+allocaInstr = printf "%s = alloca %%struct.%s\n"
+
+storeInstr :: Type -> Reg -> Reg -> String
+storeInstr t reg1 reg2 = do
+    let llvmType = toLLVMType t
+    printf "store %s %s, %s* %s\n" llvmType reg1 llvmType reg2
+
+getClassId :: Type -> String
+getClassId (Class _ (Ident id)) = id
+getClassId (Array _ _) = "Array"
+
+calculateTypeSize :: Type -> CMPMonad (String, Reg)
+calculateTypeSize t = do
+    let llvmType = toLLVMType t
+    p <- getFreeRegister
+    resultReg <- getFreeRegister
+    return (
+        printf "%s = getelementptr %s, %s* null, i32 1\n" p llvmType llvmType
+        ++ printf "%s = ptrtoint %s* %s to i32\n" resultReg llvmType p,
+        resultReg)
+
+bitcastInstr :: Reg -> Type -> Reg -> Type -> String
+bitcastInstr result t1 reg t2 =
+    printf "%s = bitcast %s %s to %s*\n" result (toLLVMType t1) reg (toLLVMType t2)
+
+compileArrayLengthExpr :: Ident -> CMPMonad ExprRet
+compileArrayLengthExpr id = do
+    (arrType, structReg) <- getVarStoreInf id
+    lenPtr <- getFreeRegister
+    len <- getFreeRegister
+    return (
+        printf "%s = getelementptr %s, %s* %s, i32 0, i32 0\n"
+            lenPtr (toLLVMType arrType) (toLLVMType arrType) structReg
+        ++ printf "%s = load i32, i32* %s\n" len lenPtr,
+        len, Int BNFC'NoPosition)
 
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
@@ -429,24 +522,101 @@ compileExpr (EApp _ (Ident id) exprs) = do
     compiledExprs <- mapM compileExpr exprs
     let result = concatMap (\(result, _, _) -> result) compiledExprs
     let args = intercalate ", " $ foldr (\(_, reg, t) acc -> 
-            (toLLVMType t ++ " " ++ reg):acc) [] compiledExprs
+            (toReturnType t ++ " " ++ reg):acc) [] compiledExprs
     (prefix, reg) <- getAppPrefix t
-    let instr = prefix ++ printf "call %s @%s(%s)\n" (toLLVMType t) id args
+    let instr = prefix ++ printf "call %s @%s(%s)\n" (toReturnType t) id args
     return (result ++ instr, reg, t)
-compileExpr (EArrRead _ id e) = undefined
-compileExpr (EArrNew _ t e) = undefined
-compileExpr (EArrLen _ id) = undefined
+compileExpr (EArrRead _ id e) = do
+    -- (result1, arr, _) <- compileExpr (EClsRead BNFC'NoPosition id (Ident "arr"))
+    -- (result2, idx, _) <- compileExpr e
+    -- (t, _) <- getVarInf id
+    -- let (Array _ arrType) = t
+    -- reg <- getFreeRegister
+    -- ptr <- getFreeRegister
+    -- resultReg <- getFreeRegister
+    -- return (
+    --     result1 ++ result2
+    --     ++ printf "%s = bitcast i8* %s to %s*\n" reg arr (toLLVMType arrType)
+    --     ++ printf "%s = getelementptr %s, %s* %s, %s %s\n" ptr (toLLVMType arrType) (toLLVMType arrType) reg (toLLVMType arrType) idx
+    --     ++ printf "%s = load %s, %s* %s\n" resultReg (toLLVMType arrType) (toLLVMType arrType) ptr,
+    --     resultReg, arrType)
+    (result, idx, _) <- compileExpr e
+    (arrType, structReg) <- getVarStoreInf id
+    let (Array _ t) = arrType
+    arrPtr <- getFreeRegister
+    arr <- getFreeRegister
+    elementPtr <- getFreeRegister
+    element <- getFreeRegister
+    return (result
+        ++ printf "%s = getelementptr %s, %s* %s, i32 0, i32 1\n"
+            arrPtr (toLLVMType arrType) (toLLVMType arrType) structReg
+        ++ printf "%s = load %s*, %s** %s\n" arr (toLLVMType t) (toLLVMType t) arrPtr
+        ++ printf "%s = getelementptr %s, %s* %s, %s %s\n" 
+            elementPtr (toLLVMType t) (toLLVMType t) arr (toLLVMType t) idx
+        ++ printf "%s = load %s, %s* %s\n" element (toLLVMType t) (toLLVMType t) elementPtr,
+        element, t)
+compileExpr (EArrNew p t e) = do
+    -- (result, spot, _) <- compileExpr e
+    -- resultReg <- getFreeRegister
+    -- typeSize <- getFreeRegister
+    -- typeSizeResult <- getFreeRegister
+    -- size <- getFreeRegister
+    -- arrReg <- getFreeRegister
+    -- lenPtr <- getFreeRegister
+    -- arrPtr <- getFreeRegister
+    -- return (
+    --     result
+    --     ++ allocaInstr resultReg "Array"
+    --     ++ printf "%s = getelementptr %s, %s* null, i32 1\n" typeSize (toLLVMType t) (toLLVMType t)
+    --     ++ printf "%s = ptrtoint %s* %s to i32\n" typeSizeResult (toLLVMType t) typeSize
+    --     ++ printf "%s = mul i32 %s, %s\n" size spot typeSizeResult
+    --     ++ callInstr arrReg (Str BNFC'NoPosition) "malloc" [("", size, Int BNFC'NoPosition)]
+    --     ++ getelementptrInstr lenPtr "Array" resultReg (show 0)
+    --     ++ storeInstr (Int BNFC'NoPosition) spot lenPtr
+    --     ++ getelementptrInstr arrPtr "Array" resultReg (show 1)
+    --     ++ storeInstr (Str BNFC'NoPosition) arrReg arrPtr,
+    --     resultReg, Array BNFC'NoPosition t)
+    let arrType = Array p t
+    (result1, structSize) <- calculateTypeSize arrType
+    structReg <- getFreeRegister
+    structResult <- getFreeRegister
+    (result2, len, _) <- compileExpr e
+    (result3, typeSize) <- calculateTypeSize t
+    arrSize <- getFreeRegister
+    arrReg <- getFreeRegister
+    arrResult <- getFreeRegister
+    lenPtr <- getFreeRegister
+    arrPtr <- getFreeRegister
+    return (
+        result1
+        ++ callInstr structReg (Str p) "malloc" [("", structSize, Int p)]
+        ++ bitcastInstr structResult (Str p) structReg arrType
+        ++ result2 ++ result3
+        ++ basicInstr arrSize (Int p) "mul" typeSize len
+        ++ callInstr arrReg (Str p) "malloc" [("", arrSize, Int p)]
+        ++ bitcastInstr arrResult (Str p) arrReg t
+        ++ printf "%s = getelementptr %s, %s* %s, i32 0, i32 0\n" 
+            lenPtr (toLLVMType arrType) (toLLVMType arrType) structResult
+        ++ printf "store i32 %s, i32* %s\n" len lenPtr
+        ++ printf "%s = getelementptr %s, %s* %s, i32 0, i32 1\n" 
+            arrPtr (toLLVMType arrType) (toLLVMType arrType) structResult
+        ++ printf "store %s* %s, %s** %s\n" (toLLVMType t) arrResult (toLLVMType t) arrPtr,
+        structResult, arrType)
 compileExpr (EClsRead _ id fld) = do
     (t, reg) <- getVarStoreInf id
-    let (Class _ (Ident cls)) = t
-    clsInf <- getClassInf (Ident cls)
-    let (fldType, fldCount) = clsInf M.! fld
-    ptrReg <- getFreeRegister
-    resultReg <- getFreeRegister
-    return (
-        getelementptrInstr ptrReg cls reg fldCount
-        ++ printf "%s = load %s, %s* %s\n" resultReg (toLLVMType fldType) (toLLVMType fldType) ptrReg,
-        resultReg, fldType)
+    case t of
+        (Array _ _) -> compileArrayLengthExpr id
+        _ -> do
+            let cls = getClassId t
+            clsInf <- getClassInf (Ident cls)
+            let (fldType, fldCount) = clsInf M.! fld
+            ptrReg <- getFreeRegister
+            resultReg <- getFreeRegister
+            return (
+                getelementptrInstr ptrReg cls reg (show fldCount)
+                ++ printf "%s = load %s, %s* %s\n" 
+                    resultReg (toLLVMType fldType) (toLLVMType fldType) ptrReg,
+                resultReg, fldType)
 compileExpr (ENewCls _ (Ident id)) = do
     reg <- getFreeRegister
     return (printf "%s = alloca %%struct.%s\n" reg id, reg, Class BNFC'NoPosition (Ident id))
@@ -480,7 +650,7 @@ compileExpr (EAnd _ e1 e2) = compileBoolExpr e1 e2 True
 compileExpr (EOr _ e1 e2) = compileBoolExpr e1 e2 False
 
 compileArg :: Arg -> String
-compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toLLVMType t) id
+compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toReturnType t) id
 
 compileAtr :: Atr -> String
 compileAtr (Atr _ t _) = toLLVMType t
@@ -511,7 +681,7 @@ compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
     let compiledArgs = intercalate ", " $ map compileArg args
     ret <- getDefaultReturn t
     return $ printf "define %s @%s(%s) {\n%s\n%s}\n\n"
-        (toLLVMType t) id compiledArgs compiledCode ret
+        (toReturnType t) id compiledArgs compiledCode ret
 compileTopDef initialEnv (ClsDef _ (Ident id) atrs) = do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
     let compiledAtrs = intercalate ", " $ map compileAtr atrs
@@ -539,19 +709,25 @@ completeCode globals code = "declare void @printInt(i32)\n"
     ++ "declare i8* @strcpy(i8*, i8*)\n"
     ++ "declare i8* @strcat(i8*, i8*)\n\n"
     ++ "@.str0 = private constant [1 x i8] c\"\00\"\n"
+    ++ "%struct.Array = type { i32, i8* }"
     ++ globals ++ "\n"
     ++ code
 
-compileEveryTopFun :: [TopDef] -> CMPMonad String
-compileEveryTopFun fundefs = do
-    mapM_ topDefToEnv fundefs
+compileEveryTopDef :: [TopDef] -> CMPMonad String
+compileEveryTopDef topdefs = do
+    mapM_ topDefToEnv topdefs
+    let pos = BNFC'NoPosition
+    topDefToEnv (ClsDef pos (Ident "Array") [
+        Atr pos (Int pos) (Ident "length"),
+        Atr pos (Str pos) (Ident "arr")
+        ])
     (env, _, _, _, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
-    result <- mapM (compileTopDef initialEnv) fundefs
+    result <- mapM (compileTopDef initialEnv) topdefs
     return $ concat result
 
 compile :: Program -> IO String
-compile (Program _ fundefs) = do
+compile (Program _ topdefs) = do
     let (code, (_, _, _, _, _, _, _, globals)) = 
-            runState (compileEveryTopFun fundefs) emptyState
+            runState (compileEveryTopDef topdefs) emptyState
     return $ completeCode globals code

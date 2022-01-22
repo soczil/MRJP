@@ -96,8 +96,6 @@ EArrRead.  Expr6 ::= Ident "[" Expr "]" ;
 
 EArrNew.   Expr6 ::= "new" Type "[" Expr "]" ;
 
-EArrLen.   Expr6 ::= Ident ".length" ;
-
 EClsRead.  Expr6 ::= Ident "." Ident ;
 
 ENewCls.   Expr6 ::= "new" Ident ;
