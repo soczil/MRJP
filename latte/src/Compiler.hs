@@ -613,7 +613,10 @@ compileExpr (EClsApp _ (Ident id) (Ident fld) exprs) = do
     return (result ++ instr, reg, t)
 compileExpr (ENewCls _ (Ident id)) = do
     reg <- getFreeRegister
-    return (printf "%s = alloca %%class.%s\n" reg id, reg, Class BNFC'NoPosition (Ident id))
+    return (
+        printf "%s = alloca %%class.%s\n" reg id
+        ++ printf "call void @%s.default.constructor(%%class.%s* %s)\n" id id reg,
+        reg, Class BNFC'NoPosition (Ident id))
 compileExpr (EString _ s) = if s == "" then emptyString else do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
     let strLen = length s + 1
@@ -679,6 +682,18 @@ compileClsFun initialEnv (Ident cls) (ClsFun p t (Ident id) args block) = do
     let newArgs = Arg p (Class p (Ident cls)) (Ident "this"):args
     compileTopDef initialEnv (FnDef p t (Ident funId) newArgs block)
 
+compileConstructor :: CMPEnv -> Ident -> CMPMonad String
+compileConstructor initialEnv (Ident id) = do
+    clsInf <- getClassInf (Ident id)
+    let funId = id ++ ".default.constructor"
+    let p = BNFC'NoPosition
+    let args = [Arg p (Class p (Ident id)) (Ident "this")]
+    let stmts = foldl (\acc (atrId, (atrType, _)) -> 
+            Ass p atrId (getDefaultValueExpr atrType):acc)
+            [] (M.toList clsInf)
+    let block = Block p stmts
+    compileTopDef initialEnv (FnDef p (Void p) (Ident funId) args block)
+
 compileTopDef :: CMPEnv -> TopDef -> CMPMonad String
 compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
     (_, _, _, _, strCounter, _, _, globals, currClass) <- get
@@ -697,8 +712,9 @@ compileTopDef initialEnv (ClsDef _ (Ident id) flds) = do
     let compiledAtrs = intercalate ", " $ map compileAtr atrs
     let newGlobals = printf "%%class.%s = type { %s }\n" id compiledAtrs ++ globals
     put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals, id)
+    constructor <- compileConstructor initialEnv (Ident id)
     result <- mapM (compileClsFun initialEnv (Ident id)) funs
-    return $ concat result
+    return $ constructor ++ concat result
 
 predefinedFuns :: [(Ident, CMPInf)]
 predefinedFuns = [
