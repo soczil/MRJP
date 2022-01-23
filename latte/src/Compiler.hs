@@ -511,21 +511,25 @@ compileArrayLengthExpr id = do
         len, Int BNFC'NoPosition)
 
 getVarStoreClassInf :: Ident -> CMPMonad ExprRet
-getVarStoreClassInf id = do
-    classVar <- isClassVar id
-    if classVar
-        then do
-            (_, _, _, _, _, _, _, _, currClass) <- get
-            clsInf <- getClassInf (Ident currClass)
-            let (t, fld) = clsInf M.! id
-            ptr <- getFreeRegister
-            val <- getFreeRegister
-            return (getelementptrInstr ptr currClass "%this" (show fld)
-                ++ printf "%s = load %s, %s* %s\n" val (toLLVMType t) (toLLVMType t) ptr,
-                val, t)
-        else do
-            (classType, classReg) <- getVarStoreInf id
-            return ("", classReg, classType)
+getVarStoreClassInf id = case id of
+    (Ident "self") -> do
+        (_, _, _, _, _, _, _, _, currClass) <- get
+        return ("", "%this", Class BNFC'NoPosition (Ident currClass))
+    _ -> do
+        classVar <- isClassVar id
+        if classVar
+            then do
+                (_, _, _, _, _, _, _, _, currClass) <- get
+                clsInf <- getClassInf (Ident currClass)
+                let (t, fld) = clsInf M.! id
+                ptr <- getFreeRegister
+                val <- getFreeRegister
+                return (getelementptrInstr ptr currClass "%this" (show fld)
+                    ++ printf "%s = load %s, %s* %s\n" val (toLLVMType t) (toLLVMType t) ptr,
+                    val, t)
+            else do
+                (classType, classReg) <- getVarStoreInf id
+                return ("", classReg, classType)
 
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
@@ -733,7 +737,7 @@ compileTopDef initialEnv (ClsDef _ (Ident id) flds) = do
             (ClsAtr p t id) -> (atrList ++ [ClsAtr p t id], funList)
             fun -> (atrList, funList ++ [fun])) ([], []) flds
     let compiledAtrs = intercalate ", " $ map compileAtr atrs
-    let newGlobals = printf "%%class.%s = type { %s }\n" id compiledAtrs ++ globals
+    let newGlobals = globals ++ printf "%%class.%s = type { %s }\n" id compiledAtrs
     put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals, id)
     constructor <- compileConstructor initialEnv (Ident id)
     result <- mapM (compileClsFun initialEnv (Ident id)) funs
