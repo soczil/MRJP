@@ -6,17 +6,19 @@ Program.   Program ::= [TopDef] ;
 
 FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
 
-ClsDef.    TopDef ::= "class" Ident "{" [Atr] "}" ;
+ClsDef.    TopDef ::= "class" Ident "{" [Field] "}" ;
 
 separator nonempty TopDef "" ;
 
 Arg. 	   Arg ::= Type Ident;
 
-Atr.       Atr ::= Type Ident ";" ;
+ClsAtr.    Field ::= Type Ident ";" ;
+
+ClsFun.    Field ::= Type Ident "(" [Arg] ")" Block ;
 
 separator  Arg "," ;
 
-separator  Atr "" ;
+separator  Field "" ;
 
 -- statements ----------------------------------------------
 
@@ -97,6 +99,8 @@ EArrRead.  Expr6 ::= Ident "[" Expr "]" ;
 EArrNew.   Expr6 ::= "new" Type "[" Expr "]" ;
 
 EClsRead.  Expr6 ::= Ident "." Ident ;
+
+EClsApp.   Expr6 ::= Ident "." Ident "(" [Expr] ")" ;
 
 ENewCls.   Expr6 ::= "new" Ident ;
 

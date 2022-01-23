@@ -567,6 +567,20 @@ compileExpr (EClsRead _ id fld) = do
                 ++ printf "%s = load %s, %s* %s\n" 
                     resultReg (toLLVMType fldType) (toLLVMType fldType) ptrReg,
                 resultReg, fldType)
+compileExpr (EClsApp _ (Ident id) (Ident fld) exprs) = do
+    (classType, classReg) <- getVarStoreInf (Ident id)
+    let cls = getClassId classType
+    let funId = cls ++ "." ++ fld
+    (t, _) <- getVarStoreInf (Ident funId)
+    compiledExprs <- mapM compileExpr exprs
+    let result = concatMap (\(result, _, _) -> result) compiledExprs
+    let args = intercalate ", " $ foldr (\(_, reg, t) acc -> 
+            (toReturnType t ++ " " ++ reg):acc) [] compiledExprs
+    let space = if null args then "" else ", "
+    (prefix, reg) <- getAppPrefix t
+    let instr = prefix ++ printf "call %s @%s(%s)\n" (toReturnType t) funId 
+            (toReturnType classType ++ " " ++ classReg ++ space ++ args)
+    return (result ++ instr, reg, t)
 compileExpr (ENewCls _ (Ident id)) = do
     reg <- getFreeRegister
     return (printf "%s = alloca %%class.%s\n" reg id, reg, Class BNFC'NoPosition (Ident id))
@@ -602,8 +616,13 @@ compileExpr (EOr _ e1 e2) = compileBoolExpr e1 e2 False
 compileArg :: Arg -> String
 compileArg (Arg _ t (Ident id)) = printf "%s %%%s" (toReturnType t) id
 
-compileAtr :: Atr -> String
-compileAtr (Atr _ t _) = toLLVMType t
+compileAtr :: Field -> String
+compileAtr (ClsAtr _ t _) = toLLVMType t
+
+clsFunToEnv :: Ident -> Field -> CMPMonad ()
+clsFunToEnv (Ident cls) (ClsFun p t (Ident id) args block) = do
+    let funId = cls ++ "." ++ id
+    topDefToEnv (FnDef p t (Ident funId) args block)
 
 topDefToEnv :: TopDef -> CMPMonad ()
 topDefToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ do
@@ -611,16 +630,24 @@ topDefToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ do
     put (
         M.insert id (FunInf t) env, 
         store, locCounter, regCounter, strCounter, lblCounter, label, globals)
-topDefToEnv (ClsDef _ id atrs) = do
+topDefToEnv (ClsDef _ id flds) = do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
-    let (atrList, _) = foldl (\(l, c) (Atr _ atrType atrId) -> 
-            ((atrId, (atrType, c)):l, c + 1)) ([], 0) atrs
+    let (atrList, funList, _) = foldl (\(atrL, funL, c) fld -> case fld of
+            (ClsAtr _ atrType atrId) -> ((atrId, (atrType, c)):atrL, funL, c + 1)
+            fun -> (atrL, fun:funL, c)) ([], [], 0) flds
     put (
         M.insert id (ClsInf (M.fromList atrList)) env,
         store, locCounter, regCounter, strCounter, lblCounter, label, globals)
+    mapM_ (clsFunToEnv id) funList
 
 funArgToEnv :: Arg -> CMPMonad ()
 funArgToEnv (Arg _ t (Ident id)) = varToEnv (Ident id) t ("%" ++ id)
+
+compileClsFun :: CMPEnv -> Ident -> Field -> CMPMonad String
+compileClsFun initialEnv (Ident cls) (ClsFun p t (Ident id) args block) = do
+    let funId = cls ++ "." ++ id
+    let newArgs = Arg p (Class p (Ident cls)) (Ident "this"):args
+    compileTopDef initialEnv (FnDef p t (Ident funId) newArgs block)
 
 compileTopDef :: CMPEnv -> TopDef -> CMPMonad String
 compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
@@ -632,12 +659,16 @@ compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
     ret <- getDefaultReturn t
     return $ printf "define %s @%s(%s) {\n%s\n%s}\n\n"
         (toReturnType t) id compiledArgs compiledCode ret
-compileTopDef initialEnv (ClsDef _ (Ident id) atrs) = do
+compileTopDef initialEnv (ClsDef _ (Ident id) flds) = do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    let (atrs, funs) = foldl (\(atrList, funList) fld -> case fld of
+            (ClsAtr p t id) -> (ClsAtr p t id:atrList, funList)
+            fun -> (atrList, fun:funList)) ([], []) flds
     let compiledAtrs = intercalate ", " $ map compileAtr atrs
     let newGlobals = printf "%%class.%s = type { %s }\n" id compiledAtrs ++ globals
     put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals)
-    return ""
+    result <- mapM (compileClsFun initialEnv (Ident id)) funs
+    return $ concat result
 
 predefinedFuns :: [(Ident, CMPInf)]
 predefinedFuns = [
