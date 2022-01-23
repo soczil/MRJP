@@ -17,10 +17,12 @@ type CMPStore = M.Map Loc Reg
 type CMPState = (CMPEnv, CMPStore, Int, Int, Int, Int, String, String, String)
 type CMPMonad = State CMPState
 type ExprRet = (String, Reg, Type)
+type ClsAtrInf = M.Map Ident (Type, Int)
+type ClsFunInf = M.Map Ident (Type, String)
 
 data CMPInf = VarInf (Type, Loc)
             | FunInf Type
-            | ClsInf (M.Map Ident (Type, Int))
+            | ClsInf (ClsAtrInf, ClsFunInf, String)
 
 emptyState :: CMPState
 emptyState = (M.empty, M.empty, 1, 1, 1, 0, "", "", "")
@@ -51,12 +53,12 @@ varToEnv id t reg = do
         M.insert locCounter reg store, 
         locCounter + 1, regCounter, strCounter, lblCounter, label, globals, currClass)
 
-getClassInf :: Ident -> CMPMonad (M.Map Ident (Type, Int))
+getClassInf :: Ident -> CMPMonad (ClsAtrInf, ClsFunInf, String)
 getClassInf id = do
     (env, _, _, _, _, _, _, _, _) <- get
     case env M.! id of
-        (ClsInf m) -> return m
-        _ -> return M.empty
+        (ClsInf inf) -> return inf
+        _ -> return (M.empty, M.empty, "")
 
 getVarStoreInf :: Ident -> CMPMonad (Type, Reg)
 getVarStoreInf id = do
@@ -174,8 +176,8 @@ compileStmt (Ass _ id e) = do
     if classVar
         then do
             (_, _, _, _, _, _, _, _, currClass) <- get
-            clsInf <- getClassInf (Ident currClass)
-            let (t, fld) = clsInf M.! id
+            (clsAtrInf, _, _) <- getClassInf (Ident currClass)
+            let (t, fld) = clsAtrInf M.! id
             ptr <- getFreeRegister
             return $ result
                 ++ getelementptrInstr ptr currClass "%this" (show fld)
@@ -202,8 +204,8 @@ compileStmt (AtrAss _ id fld e) = do
     (result, spot, _) <- compileExpr e
     (t, reg) <- getVarStoreInf id
     let (Class _ (Ident cls)) = t
-    clsInf <- getClassInf (Ident cls)
-    let (fldType, fldCount) = clsInf M.! fld
+    (clsAtrInf, _, _) <- getClassInf (Ident cls)
+    let (fldType, fldCount) = clsAtrInf M.! fld
     newReg <- getFreeRegister
     return $ result
         ++ printf "%s = getelementptr inbounds %%class.%s, %%class.%s* %s, i32 0, i32 %d\n" newReg cls cls reg fldCount 
@@ -520,8 +522,8 @@ getVarStoreClassInf id = case id of
         if classVar
             then do
                 (_, _, _, _, _, _, _, _, currClass) <- get
-                clsInf <- getClassInf (Ident currClass)
-                let (t, fld) = clsInf M.! id
+                (clsAtrInf, _, _) <- getClassInf (Ident currClass)
+                let (t, fld) = clsAtrInf M.! id
                 ptr <- getFreeRegister
                 val <- getFreeRegister
                 return (getelementptrInstr ptr currClass "%this" (show fld)
@@ -537,8 +539,8 @@ compileExpr (EVar _ id) = do
     if classVar
         then do
             (_, _, _, _, _, _, _, _, currClass) <- get
-            clsInf <- getClassInf (Ident currClass)
-            let (t, fld) = clsInf M.! id
+            (clsAtrInf, _, _) <- getClassInf (Ident currClass)
+            let (t, fld) = clsAtrInf M.! id
             ptr <- getFreeRegister
             val <- getFreeRegister
             return (getelementptrInstr ptr currClass "%this" (show fld)
@@ -609,8 +611,8 @@ compileExpr (EClsRead _ id fld) = do
         (Array _ _) -> compileArrayLengthExpr id
         _ -> do
             let cls = getClassId t
-            clsInf <- getClassInf (Ident cls)
-            let (fldType, fldCount) = clsInf M.! fld
+            (clsAtrInf, _, _) <- getClassInf (Ident cls)
+            let (fldType, fldCount) = clsAtrInf M.! fld
             ptrReg <- getFreeRegister
             resultReg <- getFreeRegister
             return (
@@ -690,15 +692,37 @@ topDefToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ do
     put (
         M.insert id (FunInf t) env, 
         store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
-topDefToEnv (ClsDef _ id flds) = do
+topDefToEnv (ClsDef _ (Ident id) flds) = do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
-    let (atrList, funList, _) = foldl (\(atrL, funL, c) fld -> case fld of
-            (ClsAtr _ atrType atrId) -> ((atrId, (atrType, c)):atrL, funL, c + 1)
-            fun -> (atrL, fun:funL, c)) ([], [], 0) flds
+    let (atrs, funs) = foldl (\(atrList, funList) fld -> case fld of
+            (ClsAtr p t id) -> (atrList ++ [ClsAtr p t id], funList)
+            fun -> (atrList, funList ++ [fun])) ([], []) flds
+    let compiledAtrs = intercalate ", " $ map compileAtr atrs
+    let (atrList, _) = foldl (\(atrL, c) (ClsAtr _ atrType atrId) -> 
+            ((atrId, (atrType, c)):atrL, c + 1)) ([], 0) atrs
+    let funList = foldl (\acc (ClsFun _ funType funId _ _) ->
+            (funId, (funType, id)):acc) [] funs
     put (
-        M.insert id (ClsInf (M.fromList atrList)) env,
+        M.insert (Ident id) (ClsInf (M.fromList atrList, M.fromList funList, compiledAtrs)) env,
         store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
-    mapM_ (clsFunToEnv id) funList
+    mapM_ (clsFunToEnv (Ident id)) funs
+topDefToEnv (ClsDefExt _ (Ident clsId) inhId flds) = do
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
+    (inhClsAtrInf, inhClsFunInf, compiledInhAtrs) <- getClassInf inhId
+    let (atrs, funs) = foldl (\(atrList, funList) fld -> case fld of
+            (ClsAtr p t id) -> (atrList ++ [ClsAtr p t id], funList)
+            fun -> (atrList, funList ++ [fun])) ([], []) flds
+    let compiledAtrs = compiledInhAtrs ++ ", " ++ intercalate ", " (map compileAtr atrs)
+    let (atrList, _) = foldl (\(atrL, c) (ClsAtr _ atrType atrId) ->
+            ((atrId, (atrType, c)):atrL, c + 1)) ([], M.size inhClsAtrInf) atrs
+    let funList = foldl (\acc (ClsFun _ funType funId _ _) ->
+            (funId, (funType, clsId)):acc) [] funs
+    let clsAtrInf = M.union (M.fromList atrList) inhClsAtrInf
+    let clsFunInf = M.union (M.fromList funList) inhClsFunInf
+    put (
+        M.insert (Ident clsId) (ClsInf (clsAtrInf, clsFunInf, compiledAtrs)) env,
+        store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
+    mapM_ (clsFunToEnv (Ident clsId)) funs
 
 funArgToEnv :: Arg -> CMPMonad ()
 funArgToEnv (Arg _ t (Ident id)) = varToEnv (Ident id) t ("%" ++ id)
@@ -711,13 +735,13 @@ compileClsFun initialEnv (Ident cls) (ClsFun p t (Ident id) args block) = do
 
 compileConstructor :: CMPEnv -> Ident -> CMPMonad String
 compileConstructor initialEnv (Ident id) = do
-    clsInf <- getClassInf (Ident id)
+    (clsAtrInf, _, _) <- getClassInf (Ident id)
     let funId = id ++ ".default.constructor"
     let p = BNFC'NoPosition
     let args = [Arg p (Class p (Ident id)) (Ident "this")]
     let stmts = foldl (\acc (atrId, (atrType, _)) -> 
             Ass p atrId (getDefaultValueExpr atrType):acc)
-            [] (M.toList clsInf)
+            [] (M.toList clsAtrInf)
     let block = Block p stmts
     compileTopDef initialEnv (FnDef p (Void p) (Ident funId) args block)
 
@@ -733,15 +757,27 @@ compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
         (toReturnType t) id compiledArgs compiledCode ret
 compileTopDef initialEnv (ClsDef _ (Ident id) flds) = do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, _) <- get
-    let (atrs, funs) = foldl (\(atrList, funList) fld -> case fld of
-            (ClsAtr p t id) -> (atrList ++ [ClsAtr p t id], funList)
-            fun -> (atrList, funList ++ [fun])) ([], []) flds
-    let compiledAtrs = intercalate ", " $ map compileAtr atrs
+    let funs = foldl (\acc fld -> case fld of
+            ClsAtr {} -> acc
+            fun -> acc ++ [fun]) [] flds
+    (_, _, compiledAtrs) <- getClassInf (Ident id)
     let newGlobals = globals ++ printf "%%class.%s = type { %s }\n" id compiledAtrs
     put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals, id)
     constructor <- compileConstructor initialEnv (Ident id)
     result <- mapM (compileClsFun initialEnv (Ident id)) funs
     return $ constructor ++ concat result
+compileTopDef initialEnv (ClsDefExt p clsId _ flds) = 
+    compileTopDef initialEnv (ClsDef p clsId flds)
+    -- (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, _) <- get
+    -- let (atrs, funs) = foldl (\(atrList, funList) fld -> case fld of
+    --         (ClsAtr p t id) -> (atrList ++ [ClsAtr p t id], funList)
+    --         fun -> (atrList, funList ++ [fun])) ([], []) flds
+    -- (_, _, compiledAtrs) <- getClassInf (Ident clsId)
+    -- let newGlobals = globals ++ printf "%%class.%s = type { %s }\n" clsId compiledAtrs
+    -- put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals, clsId)
+    -- constructor <- compileConstructor initialEnv (Ident clsId)
+    -- result <- mapM (compileClsFun initialEnv (Ident clsId)) funs
+    -- return $ constructor ++ concat result
 
 predefinedFuns :: [(Ident, CMPInf)]
 predefinedFuns = [
