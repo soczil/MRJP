@@ -14,7 +14,7 @@ type Loc = Int
 type Reg = String
 type CMPEnv = M.Map Ident CMPInf
 type CMPStore = M.Map Loc Reg
-type CMPState = (CMPEnv, CMPStore, Int, Int, Int, Int, String, String)
+type CMPState = (CMPEnv, CMPStore, Int, Int, Int, Int, String, String, String)
 type CMPMonad = State CMPState
 type ExprRet = (String, Reg, Type)
 
@@ -23,51 +23,51 @@ data CMPInf = VarInf (Type, Loc)
             | ClsInf (M.Map Ident (Type, Int))
 
 emptyState :: CMPState
-emptyState = (M.empty, M.empty, 1, 1, 1, 0, "", "")
+emptyState = (M.empty, M.empty, 1, 1, 1, 0, "", "", "")
 
 getFreeLabel :: CMPMonad String
 getFreeLabel = do
-    (env, store, locCounter, regCounter, strCounter, lblCounter, _, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, _, globals, currClass) <- get
     let currentLabel = "L" ++ show lblCounter
-    put (env, store, locCounter, regCounter, strCounter, lblCounter + 1, currentLabel, globals)
+    put (env, store, locCounter, regCounter, strCounter, lblCounter + 1, currentLabel, globals, currClass)
     return currentLabel
 
 getCurrentLabel :: CMPMonad String
 getCurrentLabel = do
-    (_, _, _, _, _, _, label, _) <- get
+    (_, _, _, _, _, _, label, _, _) <- get
     return label
 
 getFreeRegister :: CMPMonad Reg
 getFreeRegister = do
-    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
-    put (env, store, locCounter, regCounter + 1, strCounter, lblCounter, label, globals)
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
+    put (env, store, locCounter, regCounter + 1, strCounter, lblCounter, label, globals, currClass)
     return $ "%" ++ show regCounter
 
 varToEnv :: Ident -> Type -> Reg -> CMPMonad ()
 varToEnv id t reg = do
-    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
     put (
         M.insert id (VarInf (t, locCounter)) env, 
         M.insert locCounter reg store, 
-        locCounter + 1, regCounter, strCounter, lblCounter, label, globals)
+        locCounter + 1, regCounter, strCounter, lblCounter, label, globals, currClass)
 
 getClassInf :: Ident -> CMPMonad (M.Map Ident (Type, Int))
 getClassInf id = do
-    (env, _, _, _, _, _, _, _) <- get
+    (env, _, _, _, _, _, _, _, _) <- get
     case env M.! id of
         (ClsInf m) -> return m
         _ -> return M.empty
 
 getVarStoreInf :: Ident -> CMPMonad (Type, Reg)
 getVarStoreInf id = do
-    (env, store, _, _, _, _, _, _) <- get
+    (env, store, _, _, _, _, _, _, _) <- get
     case env M.! id of
         VarInf (t, loc) -> return (t, store M.! loc)
         FunInf t -> return (t, "")
 
 getVarInf :: Ident -> CMPMonad (Type, Loc)
 getVarInf id = do
-    (env, _, _, _, _, _, _, _) <- get
+    (env, _, _, _, _, _, _, _, _) <- get
     case env M.! id of
         VarInf inf -> return inf
         FunInf t -> return (t, 0)
@@ -75,14 +75,14 @@ getVarInf id = do
 updateVarReg :: Ident -> Reg -> CMPMonad ()
 updateVarReg id reg = do
     (_, loc) <- getVarInf id
-    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
     let updatedStore = M.insert loc reg store
-    put (env, updatedStore, locCounter, regCounter, strCounter, lblCounter, label, globals)
+    put (env, updatedStore, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
 
 updateRegCounter :: Int -> CMPMonad ()
 updateRegCounter counter = do
-    (env, store, locCounter, _, strCounter, lblCounter, currentLabel, globals) <- get
-    put (env, store, locCounter, counter, strCounter, lblCounter, currentLabel, globals)
+    (env, store, locCounter, _, strCounter, lblCounter, currentLabel, globals, currClass) <- get
+    put (env, store, locCounter, counter, strCounter, lblCounter, currentLabel, globals, currClass)
 
 toLLVMType :: Type -> String
 toLLVMType (Int _) = "i32"
@@ -117,10 +117,10 @@ callInstr reg t fun args = do
 
 compileBlockNewEnv :: Block -> CMPMonad String
 compileBlockNewEnv block = do
-    (oldEnv, _, _, _, _, _, _, _) <- get
+    (oldEnv, _, _, _, _, _, _, _, _) <- get
     result <- compileBlock block
-    (_, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
-    put (oldEnv, store, locCounter, regCounter, strCounter, lblCounter, label, globals)
+    (_, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
+    put (oldEnv, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
     return result
 
 compileBlock :: Block -> CMPMonad String
@@ -155,6 +155,13 @@ compileIncrDecrStmt id op = do
     let p = BNFC'NoPosition
     compileStmt (Ass p id (EAdd p (EVar p id) op (ELitInt p 1)))
 
+isClassVar :: Ident -> CMPMonad Bool
+isClassVar id = do
+    (env, _, _, _, _, _, _, _, _) <- get
+    case M.lookup id env of
+        Nothing -> return True
+        _ -> return False
+
 compileStmt :: Stmt -> CMPMonad String
 compileStmt (Empty _) = return ""
 compileStmt (BStmt _ block) = compileBlockNewEnv block
@@ -162,9 +169,20 @@ compileStmt (Decl _ t itms) = do
     result <- mapM (compileItem t) itms
     return $ concat result
 compileStmt (Ass _ id e) = do
-    (result, spot, t) <- compileExpr e
-    updateVarReg id spot
-    return result
+    (result, spot, _) <- compileExpr e
+    classVar <- isClassVar id
+    if classVar
+        then do
+            (_, _, _, _, _, _, _, _, currClass) <- get
+            clsInf <- getClassInf (Ident currClass)
+            let (t, fld) = clsInf M.! id
+            ptr <- getFreeRegister
+            return $ result
+                ++ getelementptrInstr ptr currClass "%this" (show fld)
+                ++ printf "store %s %s, %s* %s\n" (toLLVMType t) spot (toLLVMType t) ptr
+        else do
+            updateVarReg id spot
+            return result
 compileStmt (ArrAss _ id e1 e2) = do
     (result1, idx, _) <- compileExpr e1
     (result2, val, _) <- compileExpr e2
@@ -204,12 +222,12 @@ compileStmt (CondElse _ e stmt1 stmt2) = do
     label <- getFreeLabel
     let (preLabel, thenLabel, elseLabel, endLabel) =
             (label ++ "pre", label ++ "then", label ++ "else", label ++ "end")
-    (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals, currClass) <- get
     (result, spot, _) <- compileExpr e
     compiledStmt1 <- compileStmt stmt1
-    (_, thenStore, _, _, _, _, _, _) <- get
+    (_, thenStore, _, _, _, _, _, _, _) <- get
     compiledStmt2 <- compileStmt stmt2
-    (_, elseStore, _, _, _, _, _, _) <- get
+    (_, elseStore, _, _, _, _, _, _, _) <- get
 
     let vars = foldr (\(id, inf) acc ->
             case inf of
@@ -233,10 +251,10 @@ compileStmt (While _ e stmt) = do
     label <- getFreeLabel
     let (preLabel, condLabel, bodyLabel, endLabel) =
             (label ++ "pre", label ++ "cond", label ++ "body", label ++ "end")
-    (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals, currClass) <- get
     compileStmt stmt
-    (_, newStore, _, _, _, _, _, _) <- get
-    put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals)
+    (_, newStore, _, _, _, _, _, _, _) <- get
+    put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals, currClass)
 
     let vars = foldr (\(id, inf) acc ->
             case inf of
@@ -249,8 +267,8 @@ compileStmt (While _ e stmt) = do
     updateRegCounter $ regCounter + phiInstrNum
     compileExpr e
     compileStmt stmt
-    (_, newStore, _, _, _, _, _, _) <- get
-    put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals)
+    (_, newStore, _, _, _, _, _, _, _) <- get
+    put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals, currClass)
 
     phiOptions <- mapM (getPhiOptionForWhile store newStore preLabel bodyLabel) vars
     let phiCode = foldl (\acc (code, _, _) -> acc ++ code) "" phiOptions
@@ -284,12 +302,12 @@ compileStmt (ForEach _ t varId arrId stmt) = do
             stmt, 
             Incr p (Ident iterator)
             ]
-    (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals, currClass) <- get
     compiledVarDecl <- compileItem t (NoInit p varId)
     compiledIteratorDecl <- compileItem (Int p) (Init p (Ident iterator) (ELitInt p 0))
     compiledStmt <- compileStmt (While p condExpr (BStmt p (Block p body))) 
-    (_, _, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals) <- get
-    put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals)
+    (_, _, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals, currClass) <- get
+    put (env, store, locCounter, regCounter, strCounter, lblCounter, currentLabel, globals, currClass)
     return $ compiledVarDecl
         ++ compiledIteratorDecl
         ++ compiledStmt
@@ -494,8 +512,20 @@ compileArrayLengthExpr id = do
 
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
-    (t, reg) <- getVarStoreInf id
-    return ("", reg, t)
+    classVar <- isClassVar id
+    if classVar
+        then do
+            (_, _, _, _, _, _, _, _, currClass) <- get
+            clsInf <- getClassInf (Ident currClass)
+            let (t, fld) = clsInf M.! id
+            ptr <- getFreeRegister
+            val <- getFreeRegister
+            return (getelementptrInstr ptr currClass "%this" (show fld)
+                ++ printf "%s = load %s, %s* %s\n" val (toLLVMType t) (toLLVMType t) ptr,
+                val, t)
+        else do
+            (t, reg) <- getVarStoreInf id
+            return ("", reg, t)
 compileExpr (ELitInt _ n) = return ("", show n, Int BNFC'NoPosition)
 compileExpr (ELitTrue _) = return ("", "true", Bool BNFC'NoPosition)
 compileExpr (ELitFalse _) = return ("", "false", Bool BNFC'NoPosition)
@@ -585,12 +615,12 @@ compileExpr (ENewCls _ (Ident id)) = do
     reg <- getFreeRegister
     return (printf "%s = alloca %%class.%s\n" reg id, reg, Class BNFC'NoPosition (Ident id))
 compileExpr (EString _ s) = if s == "" then emptyString else do
-    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
     let strLen = length s + 1
     let newGlobals = globals 
             ++ printf "@.str%d = private constant [%d x i8] c\"%s\00\"\n" 
             strCounter strLen s
-    put (env, store, locCounter, regCounter, strCounter + 1, lblCounter, label, newGlobals)
+    put (env, store, locCounter, regCounter, strCounter + 1, lblCounter, label, newGlobals, currClass)
     reg <- getFreeRegister
     return (
         printf "%s = bitcast [%d x i8]* @.str%d to i8*\n" reg strLen strCounter,
@@ -626,18 +656,18 @@ clsFunToEnv (Ident cls) (ClsFun p t (Ident id) args block) = do
 
 topDefToEnv :: TopDef -> CMPMonad ()
 topDefToEnv (FnDef _ t id _ _) = when (id /= Ident "main") $ do
-    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
     put (
         M.insert id (FunInf t) env, 
-        store, locCounter, regCounter, strCounter, lblCounter, label, globals)
+        store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
 topDefToEnv (ClsDef _ id flds) = do
-    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
     let (atrList, funList, _) = foldl (\(atrL, funL, c) fld -> case fld of
             (ClsAtr _ atrType atrId) -> ((atrId, (atrType, c)):atrL, funL, c + 1)
             fun -> (atrL, fun:funL, c)) ([], [], 0) flds
     put (
         M.insert id (ClsInf (M.fromList atrList)) env,
-        store, locCounter, regCounter, strCounter, lblCounter, label, globals)
+        store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
     mapM_ (clsFunToEnv id) funList
 
 funArgToEnv :: Arg -> CMPMonad ()
@@ -651,8 +681,8 @@ compileClsFun initialEnv (Ident cls) (ClsFun p t (Ident id) args block) = do
 
 compileTopDef :: CMPEnv -> TopDef -> CMPMonad String
 compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
-    (_, _, _, _, strCounter, _, _, globals) <- get
-    put (initialEnv, M.empty, 1, 1, strCounter, 0, "entry", globals)
+    (_, _, _, _, strCounter, _, _, globals, currClass) <- get
+    put (initialEnv, M.empty, 1, 1, strCounter, 0, "entry", globals, currClass)
     mapM_ funArgToEnv args
     compiledCode <- compileBlock block
     let compiledArgs = intercalate ", " $ map compileArg args
@@ -660,13 +690,13 @@ compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
     return $ printf "define %s @%s(%s) {\n%s\n%s}\n\n"
         (toReturnType t) id compiledArgs compiledCode ret
 compileTopDef initialEnv (ClsDef _ (Ident id) flds) = do
-    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals) <- get
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, _) <- get
     let (atrs, funs) = foldl (\(atrList, funList) fld -> case fld of
             (ClsAtr p t id) -> (ClsAtr p t id:atrList, funList)
             fun -> (atrList, fun:funList)) ([], []) flds
     let compiledAtrs = intercalate ", " $ map compileAtr atrs
     let newGlobals = printf "%%class.%s = type { %s }\n" id compiledAtrs ++ globals
-    put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals)
+    put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals, id)
     result <- mapM (compileClsFun initialEnv (Ident id)) funs
     return $ concat result
 
@@ -696,13 +726,13 @@ completeCode globals code = "declare void @printInt(i32)\n"
 compileEveryTopDef :: [TopDef] -> CMPMonad String
 compileEveryTopDef topdefs = do
     mapM_ topDefToEnv topdefs
-    (env, _, _, _, _, _, _, _) <- get
+    (env, _, _, _, _, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
     result <- mapM (compileTopDef initialEnv) topdefs
     return $ concat result
 
 compile :: Program -> IO String
 compile (Program _ topdefs) = do
-    let (code, (_, _, _, _, _, _, _, globals)) = 
+    let (code, (_, _, _, _, _, _, _, globals, _)) = 
             runState (compileEveryTopDef topdefs) emptyState
     return $ completeCode globals code
