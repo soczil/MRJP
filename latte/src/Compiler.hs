@@ -510,6 +510,23 @@ compileArrayLengthExpr id = do
         ++ printf "%s = load i32, i32* %s\n" len lenPtr,
         len, Int BNFC'NoPosition)
 
+getVarStoreClassInf :: Ident -> CMPMonad ExprRet
+getVarStoreClassInf id = do
+    classVar <- isClassVar id
+    if classVar
+        then do
+            (_, _, _, _, _, _, _, _, currClass) <- get
+            clsInf <- getClassInf (Ident currClass)
+            let (t, fld) = clsInf M.! id
+            ptr <- getFreeRegister
+            val <- getFreeRegister
+            return (getelementptrInstr ptr currClass "%this" (show fld)
+                ++ printf "%s = load %s, %s* %s\n" val (toLLVMType t) (toLLVMType t) ptr,
+                val, t)
+        else do
+            (classType, classReg) <- getVarStoreInf id
+            return ("", classReg, classType)
+
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
     classVar <- isClassVar id
@@ -598,7 +615,7 @@ compileExpr (EClsRead _ id fld) = do
                     resultReg (toLLVMType fldType) (toLLVMType fldType) ptrReg,
                 resultReg, fldType)
 compileExpr (EClsApp _ (Ident id) (Ident fld) exprs) = do
-    (classType, classReg) <- getVarStoreInf (Ident id)
+    (compiledCode, classReg, classType) <- getVarStoreClassInf (Ident id)
     let cls = getClassId classType
     let funId = cls ++ "." ++ fld
     (t, _) <- getVarStoreInf (Ident funId)
@@ -610,11 +627,17 @@ compileExpr (EClsApp _ (Ident id) (Ident fld) exprs) = do
     (prefix, reg) <- getAppPrefix t
     let instr = prefix ++ printf "call %s @%s(%s)\n" (toReturnType t) funId 
             (toReturnType classType ++ " " ++ classReg ++ space ++ args)
-    return (result ++ instr, reg, t)
+    return (compiledCode ++ result ++ instr, reg, t)
 compileExpr (ENewCls _ (Ident id)) = do
+    p <- getFreeRegister
+    s <- getFreeRegister
+    ptr <- getFreeRegister
     reg <- getFreeRegister
     return (
-        printf "%s = alloca %%class.%s\n" reg id
+        printf "%s = getelementptr %%class.%s, %%class.%s* null, i32 1\n" p id id
+        ++ printf "%s = ptrtoint %%class.%s* %s to i32\n" s id p
+        ++ printf "%s = call i8* @malloc(i32 %s)\n" ptr s
+        ++ printf "%s = bitcast i8* %s to %%class.%s*\n" reg ptr id
         ++ printf "call void @%s.default.constructor(%%class.%s* %s)\n" id id reg,
         reg, Class BNFC'NoPosition (Ident id))
 compileExpr (EString _ s) = if s == "" then emptyString else do
@@ -707,8 +730,8 @@ compileTopDef initialEnv (FnDef _ t (Ident id) args block) = do
 compileTopDef initialEnv (ClsDef _ (Ident id) flds) = do
     (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, _) <- get
     let (atrs, funs) = foldl (\(atrList, funList) fld -> case fld of
-            (ClsAtr p t id) -> (ClsAtr p t id:atrList, funList)
-            fun -> (atrList, fun:funList)) ([], []) flds
+            (ClsAtr p t id) -> (atrList ++ [ClsAtr p t id], funList)
+            fun -> (atrList, funList ++ [fun])) ([], []) flds
     let compiledAtrs = intercalate ", " $ map compileAtr atrs
     let newGlobals = printf "%%class.%s = type { %s }\n" id compiledAtrs ++ globals
     put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals, id)
