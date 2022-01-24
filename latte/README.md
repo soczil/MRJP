@@ -22,6 +22,11 @@ do generowania kolejnych rejestrów.
 
 W rozwiązaniu korzystam z funkcji *phi* dzięki czemu nie używam instrukcji *alloca*, *store* ani *load*.
 
+Zaimplementowane rozszerzenia:
+- tablice
+- struktury
+- obiekty
+
 ## Uruchamianie
 
 Wystarczy wywołać polecenie `make`. Spowoduje to utworzenie katalogu z parserem oraz pliku wykonywalnego
