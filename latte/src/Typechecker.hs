@@ -85,8 +85,8 @@ checkStmt (ArrAss p id e1 e2) = do
     elemType <- checkExpr e2
     unless (checkType (Array p elemType) arrType) 
         $ throwError $ WrongArrElemType id arrType elemType p
-checkStmt (AtrAss p id fld e) = do
-    idType <- getVarType id p
+checkStmt (AtrAss p lhs fld e) = do
+    idType <- checkExpr lhs
     let clsId = getClsId idType
     (clsAtrInf, _) <- getClsInf clsId p
     case M.lookup fld clsAtrInf of
@@ -251,29 +251,28 @@ checkExpr (EArrRead p id e) = do
 checkExpr (EArrNew p t e) = do
     assertExprType e (Int p) p
     return (Array p t)
-checkExpr (EClsRead p id fld) = do
-    t <- getVarType id p
+checkExpr (EClsRead p e fld) = do
+    t <- checkExpr e
     case t of
         (Array p t) -> do
             unless (fld == Ident "length") $ throwError $ NotArrayAtr fld p
             return (Int p)
         _ -> do
-            t <- getVarType id p
             let clsId = getClsId t
             (clsAtrInf, _) <- getClsInf clsId p
             case M.lookup fld clsAtrInf of
                 Just t -> return t
                 Nothing -> throwError $ FieldNotInClass fld p
-checkExpr (EClsApp p id (Ident funId) exprs) = do
-    if id == Ident "self"
-        then do
+checkExpr (EClsApp p e (Ident funId) exprs) = do
+    case e of
+        (EVar _ (Ident "self")) -> do
             (_, _, _, _, currClass) <- get
             (_, clsFunInf) <- getClsInf (Ident currClass) p
             case M.lookup (Ident funId) clsFunInf of
                 Just (t, _) -> return t
                 Nothing -> throwError $ FieldNotInClass (Ident funId) p
-        else do
-            t <- getVarType id p
+        _ -> do
+            t <- checkExpr e
             let (Ident clsId) = getClsId t
             (_, clsFunInf) <- getClsInf (Ident clsId) p
             case M.lookup (Ident funId) clsFunInf of

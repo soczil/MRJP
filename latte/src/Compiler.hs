@@ -209,15 +209,16 @@ compileStmt (ArrAss _ id e1 e2) = do
         ++ printf "%s = getelementptr %s, %s* %s, %s %s\n"
             element (toLLVMType t) (toLLVMType t) arr (toLLVMType t) idx
         ++ printf "store %s %s, %s* %s\n" (toLLVMType t) val (toLLVMType t) element
-compileStmt (AtrAss _ id fld e) = do
+compileStmt (AtrAss _ clsExpr fld e) = do
     (result, spot, _) <- compileExpr e
-    (t, reg) <- getVarStoreInf id
+    (compiledCode, reg, t) <- compileExpr clsExpr
     let (Class _ (Ident cls)) = t
     (clsAtrInf, _, _) <- getClassInf (Ident cls)
     let (fldType, fldCount) = clsAtrInf M.! fld
     newReg <- getFreeRegister
-    return $ result
-        ++ printf "%s = getelementptr inbounds %%class.%s, %%class.%s* %s, i32 0, i32 %d\n" newReg cls cls reg fldCount 
+    return $ result ++ compiledCode
+        ++ printf "%s = getelementptr inbounds %%class.%s, %%class.%s* %s, i32 0, i32 %d\n" 
+            newReg cls cls reg fldCount 
         ++ printf "store %s %s, %s* %s\n" (toLLVMType fldType) spot (toLLVMType fldType) newReg
 compileStmt (Incr _ id) = compileIncrDecrStmt id $ Plus BNFC'NoPosition
 compileStmt (Decr _ id) = compileIncrDecrStmt id $ Minus BNFC'NoPosition
@@ -306,7 +307,7 @@ compileStmt (While _ e stmt) = do
 compileStmt (ForEach _ t varId arrId stmt) = do
     let p = BNFC'NoPosition
     let iterator = "arr.iterate"
-    let lengthExpr = EClsRead p arrId (Ident "length")
+    let lengthExpr = EClsRead p (EVar p arrId) (Ident "length")
     let condExpr = ERel p (EVar p (Ident iterator)) (LTH p) lengthExpr
     let body = [
             Ass p varId (EArrRead p arrId (EVar p (Ident iterator))), 
@@ -510,9 +511,8 @@ bitcastInstr :: Reg -> Type -> Reg -> Type -> String
 bitcastInstr result t1 reg t2 =
     printf "%s = bitcast %s %s to %s*\n" result (toLLVMType t1) reg (toLLVMType t2)
 
-compileArrayLengthExpr :: Ident -> CMPMonad ExprRet
-compileArrayLengthExpr id = do
-    (arrType, classReg) <- getVarStoreInf id
+compileArrayLengthExpr :: Type -> Reg -> CMPMonad ExprRet
+compileArrayLengthExpr arrType classReg = do
     lenPtr <- getFreeRegister
     len <- getFreeRegister
     return (
@@ -624,10 +624,10 @@ compileExpr (EArrNew p t e) = do
             arrPtr (toLLVMType arrType) (toLLVMType arrType) classResult
         ++ printf "store %s* %s, %s** %s\n" (toLLVMType t) arrResult (toLLVMType t) arrPtr,
         classResult, arrType)
-compileExpr (EClsRead _ id fld) = do
-    (t, reg) <- getVarStoreInf id
+compileExpr (EClsRead _ e fld) = do
+    (compiledCode, reg, t) <- compileExpr e
     case t of
-        (Array _ _) -> compileArrayLengthExpr id
+        (Array _ _) -> compileArrayLengthExpr t reg
         _ -> do
             let cls = getClassId t
             (clsAtrInf, _, _) <- getClassInf (Ident cls)
@@ -635,12 +635,13 @@ compileExpr (EClsRead _ id fld) = do
             ptrReg <- getFreeRegister
             resultReg <- getFreeRegister
             return (
-                getelementptrInstr ptrReg cls reg (show fldCount)
+                compiledCode
+                ++ getelementptrInstr ptrReg cls reg (show fldCount)
                 ++ printf "%s = load %s, %s* %s\n" 
                     resultReg (toLLVMType fldType) (toLLVMType fldType) ptrReg,
                 resultReg, fldType)
-compileExpr (EClsApp _ (Ident id) (Ident fld) exprs) = do
-    (compiledCode, classReg, classType) <- getVarStoreClassInf (Ident id)
+compileExpr (EClsApp _ e (Ident fld) exprs) = do
+    (compiledCode, classReg, classType) <- compileExpr e
     let cls = getClassId classType
     (_, clsFunInf, _) <- getClassInf (Ident cls)
     let (t, parent) = clsFunInf M.! Ident fld

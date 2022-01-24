@@ -44,7 +44,7 @@ Ass.       Stmt ::= Ident "=" Expr  ";" ;
 
 ArrAss.    Stmt ::= Ident "[" Expr "]" "=" Expr ";" ; 
 
-AtrAss.    Stmt ::= Ident "." Ident "=" Expr ";" ;
+AtrAss.    Stmt ::= Expr6 "." Ident "=" Expr ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
 
@@ -100,9 +100,9 @@ EArrRead.  Expr6 ::= Ident "[" Expr "]" ;
 
 EArrNew.   Expr6 ::= "new" Type "[" Expr "]" ;
 
-EClsRead.  Expr6 ::= Ident "." Ident ;
+EClsRead.  Expr6 ::= Expr6 "." Ident ;
 
-EClsApp.   Expr6 ::= Ident "." Ident "(" [Expr] ")" ;
+EClsApp.   Expr6 ::= Expr6 "." Ident "(" [Expr] ")" ;
 
 ENewCls.   Expr6 ::= "new" Ident ;
 
