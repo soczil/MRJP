@@ -81,6 +81,15 @@ updateVarReg id reg = do
     let updatedStore = M.insert loc reg store
     put (env, updatedStore, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
 
+updateVarInf :: Ident -> Reg -> Type -> CMPMonad ()
+updateVarInf id reg newType = do
+    (oldType, loc) <- getVarInf id
+    (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass) <- get
+    let updatedEnv = M.insert id (VarInf (newType, loc)) env
+    let updatedStore = M.insert loc reg store
+    put (updatedEnv, updatedStore, locCounter, regCounter, strCounter, lblCounter, label, globals, currClass)
+
+
 updateRegCounter :: Int -> CMPMonad ()
 updateRegCounter counter = do
     (env, store, locCounter, _, strCounter, lblCounter, currentLabel, globals, currClass) <- get
@@ -171,7 +180,7 @@ compileStmt (Decl _ t itms) = do
     result <- mapM (compileItem t) itms
     return $ concat result
 compileStmt (Ass _ id e) = do
-    (result, spot, _) <- compileExpr e
+    (result, spot, t) <- compileExpr e
     classVar <- isClassVar id
     if classVar
         then do
@@ -183,7 +192,7 @@ compileStmt (Ass _ id e) = do
                 ++ getelementptrInstr ptr currClass "%this" (show fld)
                 ++ printf "store %s %s, %s* %s\n" (toLLVMType t) spot (toLLVMType t) ptr
         else do
-            updateVarReg id spot
+            updateVarInf id spot t
             return result
 compileStmt (ArrAss _ id e1 e2) = do
     (result1, idx, _) <- compileExpr e1
@@ -533,6 +542,16 @@ getVarStoreClassInf id = case id of
                 (classType, classReg) <- getVarStoreInf id
                 return ("", classReg, classType)
 
+bitcastClass :: String -> String -> Reg -> CMPMonad (String, Reg)
+bitcastClass cls parent reg = do
+    if cls /= parent
+        then do
+            castReg <- getFreeRegister
+            return (
+                printf "%s = bitcast %%class.%s* %s to %%class.%s*\n" castReg cls reg parent,
+                castReg)
+        else return ("", reg)
+
 compileExpr :: Expr -> CMPMonad ExprRet
 compileExpr (EVar _ id) = do
     classVar <- isClassVar id
@@ -623,17 +642,20 @@ compileExpr (EClsRead _ id fld) = do
 compileExpr (EClsApp _ (Ident id) (Ident fld) exprs) = do
     (compiledCode, classReg, classType) <- getVarStoreClassInf (Ident id)
     let cls = getClassId classType
-    let funId = cls ++ "." ++ fld
-    (t, _) <- getVarStoreInf (Ident funId)
+    (_, clsFunInf, _) <- getClassInf (Ident cls)
+    let (t, parent) = clsFunInf M.! Ident fld
+    let funId = parent ++ "." ++ fld
     compiledExprs <- mapM compileExpr exprs
     let result = concatMap (\(result, _, _) -> result) compiledExprs
     let args = intercalate ", " $ foldr (\(_, reg, t) acc -> 
             (toReturnType t ++ " " ++ reg):acc) [] compiledExprs
     let space = if null args then "" else ", "
+    (cast, thisReg) <- bitcastClass cls parent classReg
     (prefix, reg) <- getAppPrefix t
-    let instr = prefix ++ printf "call %s @%s(%s)\n" (toReturnType t) funId 
-            (toReturnType classType ++ " " ++ classReg ++ space ++ args)
-    return (compiledCode ++ result ++ instr, reg, t)
+    let instr = prefix ++ printf "call %s @%s(%s)\n" 
+            (toReturnType t) funId (toReturnType (Class BNFC'NoPosition (Ident parent)) 
+            ++ " " ++ thisReg ++ space ++ args)
+    return (compiledCode ++ result ++ cast ++ instr, reg, t)
 compileExpr (ENewCls _ (Ident id)) = do
     p <- getFreeRegister
     s <- getFreeRegister
