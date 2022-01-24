@@ -1,4 +1,4 @@
-BNFC = bnfc # /home/students/inf/PUBLIC/MRJP/bin/bnfc
+BNFC = /home/students/inf/PUBLIC/MRJP/bin/bnfc
 LATTE = Latte
 LATTE_PATH = src/${LATTE}.cf
 MAIN = src/Main.hs
@@ -24,12 +24,10 @@ parser: ${LATTE_PATH}
 	rm -r -f ${PARSER_BUILD}
 
 runtime: ${RUNTIME_PATH}
-#	llvm-as ${RUNTIME_PATH} -o lib/runtime.bc
-	clang -emit-llvm -c ${RUNTIME_PATH} -o lib/runtime.bc
+	llvm-as ${RUNTIME_PATH} -o lib/runtime.bc
 
 main: ${MAIN_PATH} ${TYPECHECKER} ${COMPILER} ${ERRORS}
 	${GHC} -isrc ${MAIN} -o ${EXEC_FILE}
 
 clean:
-#	rm -r -f ${LATTE} src/*.o src/*.hi ${EXEC_FILE}
-	rm -r -f ${LATTE} src/*.o src/*.hi ${EXEC_FILE} lib/*.bc
+	rm -r -f ${LATTE} src/*.o src/*.hi ${EXEC_FILE}
