@@ -13,34 +13,37 @@ import Errors
 type TCEnv = M.Map Ident TCInf
 type TCUsedVars = S.Set Ident
 type TCExcept = ExceptT TCError IO
-type TCState = (TCEnv, TCUsedVars, Type, Bool)
+type TCState = (TCEnv, TCUsedVars, Type, Bool, String)
 type TCMonad = StateT TCState TCExcept
+type ClsAtrInf = M.Map Ident Type
+type ClsFunInf = M.Map Ident (Type, String)
 
 data TCInf = VarInf Type
            | FunInf (Type, [Type])
+           | ClsInf (ClsAtrInf, ClsFunInf)
     deriving Eq
 
 data CondExprVal = CondTrue | CondFalse | CondUndefined deriving (Eq)
 
 emptyState :: TCState
-emptyState = (M.empty, S.empty, Void BNFC'NoPosition, False)
+emptyState = (M.empty, S.empty, Void BNFC'NoPosition, False, "")
 
 checkBlock :: Block -> TCMonad ()
 checkBlock (Block _ stmts) = mapM_ checkStmt stmts
 
 checkBlockNewEnv :: Block -> TCMonad ()
 checkBlockNewEnv block = do
-    (oldEnv, oldUsedVars, oldRetType, oldRet) <- get
-    put (oldEnv, S.fromAscList (M.keys oldEnv), oldRetType, oldRet)
+    (oldEnv, oldUsedVars, oldRetType, oldRet, oldCurrClass) <- get
+    put (oldEnv, S.fromAscList (M.keys oldEnv), oldRetType, oldRet, oldCurrClass)
     checkBlock block
     newRet <- getRet
-    put (oldEnv, oldUsedVars, oldRetType, newRet)
+    put (oldEnv, oldUsedVars, oldRetType, newRet, oldCurrClass)
 
 varToEnv :: Ident -> Type -> BNFC'Position -> TCMonad ()
 varToEnv id t p = do
-    (env, usedVars, retType, ret) <- get
+    (env, usedVars, retType, ret, currClass) <- get
     when (M.member id env && S.notMember id usedVars) $ throwError $ VarAlreadyDeclared id p
-    put (M.insert id (VarInf t) env, S.delete id usedVars, retType, ret)
+    put (M.insert id (VarInf t) env, S.delete id usedVars, retType, ret, currClass)
 
 checkItem :: Type -> Item -> TCMonad ()
 checkItem t (NoInit p id) = varToEnv id t p
@@ -50,7 +53,7 @@ checkItem t (Init p id expr) = do
 
 checkRetType :: Type -> BNFC'Position -> TCMonad ()
 checkRetType t p = do
-    (_, _, retType, _) <- get
+    (_, _, retType, _, _) <- get
     unless (checkType t retType) $ throwError $ WrongRetType t retType p
 
 condExprCheck :: Expr -> CondExprVal
@@ -60,12 +63,12 @@ condExprCheck _ = CondUndefined
 
 updateRet :: Bool -> TCMonad ()
 updateRet ret = do
-    (env, usedVars, retType, _) <- get
-    put (env, usedVars, retType, ret)
+    (env, usedVars, retType, _, currClass) <- get
+    put (env, usedVars, retType, ret, currClass)
 
 getRet :: TCMonad Bool
 getRet = do
-    (_, _, _, ret) <- get
+    (_, _, _, ret, _) <- get
     return ret
 
 checkStmt :: Stmt -> TCMonad ()
@@ -82,6 +85,13 @@ checkStmt (ArrAss p id e1 e2) = do
     elemType <- checkExpr e2
     unless (checkType (Array p elemType) arrType) 
         $ throwError $ WrongArrElemType id arrType elemType p
+checkStmt (AtrAss p id fld e) = do
+    idType <- getVarType id p
+    let clsId = getClsId idType
+    (clsAtrInf, _) <- getClsInf clsId p
+    case M.lookup fld clsAtrInf of
+        Just t -> assertExprType e t p
+        Nothing -> throwError $ FieldNotInClass fld p
 checkStmt (Incr p id) = do
     actual <- getVarType id p
     assertType actual (Int p) p
@@ -118,10 +128,10 @@ checkStmt (ForEach p t varId arrId stmt) = do
     arrType <- getVarType arrId p
     unless (checkType (Array p t) arrType) 
         $ throwError $ WrongArrElemType arrId arrType t p
-    (env, usedVars, retType, ret) <- get
-    put (M.insert varId (VarInf t) env, usedVars, retType, ret)
+    (env, usedVars, retType, ret, currClass) <- get
+    put (M.insert varId (VarInf t) env, usedVars, retType, ret, currClass)
     checkStmt stmt
-    put (env, usedVars, retType, ret)
+    put (env, usedVars, retType, ret, currClass)
 checkStmt (SExp _ e) = void $ checkExpr e
 
 assertArray :: Ident -> BNFC'Position -> TCMonad ()
@@ -137,6 +147,7 @@ checkType (Str _) (Str _) = True
 checkType (Bool _) (Bool _) = True
 checkType (Void _) (Void _) = True
 checkType (Array _ t1) (Array _ t2) = checkType t1 t2
+checkType (Class _ _) (Class _ _) = True
 checkType _ _ = False
 
 assertType :: Type -> Type -> BNFC'Position -> TCMonad ()
@@ -150,7 +161,7 @@ assertExprType e t p = do
 
 getInf :: Ident -> BNFC'Position -> TCMonad TCInf
 getInf id p = do
-    (env, _, _, _) <- get
+    (env, _, _, _, _) <- get
     case M.lookup id env of
         Nothing -> throwError $ VarNotDeclared id p
         Just inf -> return inf
@@ -188,16 +199,42 @@ checkFunArg p (t, e) = do
 
 getVarType :: Ident -> BNFC'Position -> TCMonad Type
 getVarType id p = do
+    (env, _, _, _, currClass) <- get
+    case M.lookup id env of
+        Just inf -> do
+            case inf of
+                (VarInf t) -> return t
+                _ -> throwError $ NotAVariable id p
+        Nothing -> do
+            (clsAtrInf, _) <- getClsInf (Ident currClass) p
+            case M.lookup id clsAtrInf of
+                Just t -> return t
+                Nothing -> throwError $ VarNotDeclared id p
+
+getClsInf :: Ident -> BNFC'Position -> TCMonad (ClsAtrInf, ClsFunInf)
+getClsInf id p = do
     inf <- getInf id p
     case inf of
-        (VarInf t) -> return t
-        _ -> throwError $ NotAVariable id p
+        (ClsInf inf) -> return inf
+        _ -> throwError $ NotAClass id p
+
+getClsId :: Type -> Ident
+getClsId (Class _ id) = id
 
 checkExpr :: Expr -> TCMonad Type
-checkExpr (EVar p id) = getVarType id p
+checkExpr (EVar p id) = do
+    (env, _, _, _, currClass) <- get
+    case M.lookup id env of
+        Just _ -> getVarType id p
+        Nothing -> do
+            (clsAtrInf, _) <- getClsInf (Ident currClass) p
+            case M.lookup id clsAtrInf of
+                Just t -> return t
+                Nothing -> throwError $ VarNotDeclared id p
 checkExpr (ELitInt p _) = return $ Int p
 checkExpr (ELitTrue p) = return $ Bool p
 checkExpr (ELitFalse p) = return $ Bool p
+checkExpr (ENull p id) = return $ Class p id
 checkExpr (EApp p id exprs) = do
     (FunInf (t, argTypes)) <- getFunInf id p
     let argLen = length argTypes
@@ -214,9 +251,38 @@ checkExpr (EArrRead p id e) = do
 checkExpr (EArrNew p t e) = do
     assertExprType e (Int p) p
     return (Array p t)
--- checkExpr (EArrLen p id) = do
---     assertArray id p
---     return (Int p)
+checkExpr (EClsRead p id fld) = do
+    t <- getVarType id p
+    case t of
+        (Array p t) -> do
+            unless (fld == Ident "length") $ throwError $ NotArrayAtr fld p
+            return (Int p)
+        _ -> do
+            t <- getVarType id p
+            let clsId = getClsId t
+            (clsAtrInf, _) <- getClsInf clsId p
+            case M.lookup fld clsAtrInf of
+                Just t -> return t
+                Nothing -> throwError $ FieldNotInClass fld p
+checkExpr (EClsApp p id (Ident funId) exprs) = do
+    if id == Ident "self"
+        then do
+            (_, _, _, _, currClass) <- get
+            (_, clsFunInf) <- getClsInf (Ident currClass) p
+            case M.lookup (Ident funId) clsFunInf of
+                Just (t, _) -> return t
+                Nothing -> throwError $ FieldNotInClass (Ident funId) p
+        else do
+            t <- getVarType id p
+            let (Ident clsId) = getClsId t
+            (_, clsFunInf) <- getClsInf (Ident clsId) p
+            case M.lookup (Ident funId) clsFunInf of
+                Just (_, parent) -> do
+                    let funName = parent ++ "." ++ funId
+                    checkExpr (EApp p (Ident funName) exprs)
+                Nothing -> throwError $ FieldNotInClass (Ident funId) p
+checkExpr (ENewCls p id) = do
+    return $ Class p id
 checkExpr (EString p _) = return $ Str p
 checkExpr (Neg p e) = checkPrefixOpType e $ Int p
 checkExpr (Not p e) = checkPrefixOpType e $ Bool p
@@ -238,14 +304,40 @@ checkExpr (ERel p e1 _ e2) = do
 checkExpr (EAnd p e1 e2) = checkOpType e1 e2 $ Bool p
 checkExpr (EOr p e1 e2) = checkOpType e1 e2 $ Bool p
 
-funToEnv :: TopDef -> TCMonad ()
-funToEnv (FnDef p t id args _) = do
-    (env, usedVars, retType, ret) <- get
+clsFunToEnv :: Ident -> Field -> TCMonad ()
+clsFunToEnv (Ident cls) (ClsFun p t (Ident id) args block) = do
+    let funId = cls ++ "." ++ id
+    topDefToEnv (FnDef p t (Ident funId) args block)
+
+topDefToEnv :: TopDef -> TCMonad ()
+topDefToEnv (FnDef p t id args _) = do
+    (env, usedVars, retType, ret, currClass) <- get
     case M.lookup id env of
         Nothing -> do
             let argTypeList = foldr (\(Arg _ t _) acc -> t : acc) [] args
-            put (M.insert id (FunInf (t, argTypeList)) env, usedVars, retType, ret)
+            put (M.insert id (FunInf (t, argTypeList)) env, usedVars, retType, ret, currClass)
         Just _ -> throwError $ FunAlreadyDeclared id p
+topDefToEnv (ClsDef p (Ident id) flds) = do
+    (env, usedVars, retType, ret, currClass) <- get
+    let (atrList, funs) = foldr (\fld (atrL, funL) -> case fld of
+            (ClsAtr p atrType atrId) -> ((atrId, atrType) : atrL, funL)
+            fun -> (atrL, fun : funL)) ([], []) flds
+    let funList = foldr (\(ClsFun _ t funId _ _) acc -> (funId, (t, id)) : acc) [] funs
+    put (M.insert (Ident id) (ClsInf (M.fromList atrList, M.fromList funList)) env, 
+        usedVars, retType, ret, id)
+    mapM_ (clsFunToEnv (Ident id)) funs
+topDefToEnv (ClsDefExt p (Ident id) inh flds) = do
+    (env, usedVars, retType, ret, currClass) <- get
+    let (atrList, funs) = foldr (\fld (atrL, funL) -> case fld of
+            (ClsAtr p atrType atrId) -> ((atrId, atrType) : atrL, funL)
+            fun -> (atrL, fun : funL)) ([], []) flds
+    let funList = foldr (\(ClsFun _ t funId _ _) acc -> (funId, (t, id)) : acc) [] funs
+    (inhClsAtrInf, inhClsFunInf) <- getClsInf inh p
+    let clsAtrInf = M.union (M.fromList atrList) inhClsAtrInf
+    let clsFunInf = M.union (M.fromList funList) inhClsFunInf
+    put (M.insert (Ident id) (ClsInf (clsAtrInf, clsFunInf)) env, 
+        usedVars, retType, ret, id)
+    mapM_ (clsFunToEnv (Ident id)) funs
 
 funArgsToEnv :: [Arg] -> TCMonad ()
 funArgsToEnv = mapM_ (\(Arg p argType argId) -> varToEnv argId argType p)
@@ -254,13 +346,28 @@ hasFunRet :: Type -> TCMonad Bool
 hasFunRet (Void _) = return True
 hasFunRet _ = getRet
 
-checkTopFun :: TCEnv -> TopDef -> TCMonad ()
-checkTopFun initialEnv (FnDef p t id args block) = do
-    put (initialEnv, S.empty, t, False)
+checkClsFun :: TCEnv -> Ident -> Field -> TCMonad ()
+checkClsFun initialEnv (Ident cls) (ClsFun p t (Ident id) args block) = do
+    let funId = cls ++ "." ++ id
+    checkTopDef initialEnv (FnDef p t (Ident funId) args block)
+
+checkTopDef :: TCEnv -> TopDef -> TCMonad ()
+checkTopDef initialEnv (FnDef p t id args block) = do
+    (_, _, _, _, currClass) <- get
+    put (initialEnv, S.empty, t, False, currClass)
     funArgsToEnv args
     checkBlock block
     funRet <- hasFunRet t
     unless funRet $ throwError $ NoReturn id p
+checkTopDef initialEnv (ClsDef p (Ident id) flds) = do
+    (env, usedVars, retType, ret, _) <- get
+    put (env, usedVars, retType, ret, id)
+    let funs = foldr (\fld acc -> case fld of
+            ClsAtr {} -> acc
+            fun -> fun : acc) [] flds
+    mapM_ (checkClsFun initialEnv (Ident id)) funs
+checkTopDef initialEnv (ClsDefExt p id _ flds) =
+    checkTopDef initialEnv (ClsDef p id flds)
 
 predefinedFuns :: [(Ident, TCInf)]
 predefinedFuns = [
@@ -274,24 +381,24 @@ predefinedFuns = [
 checkMain :: TCMonad ()
 checkMain = do
     let id = Ident "main"
-    (env, _, _, _) <- get
+    (env, _, _, _, _) <- get
     case M.lookup id env of
         Nothing -> throwError NoMainFunction
         Just (FunInf (t, argTypes)) -> do
             unless (checkType t (Int BNFC'NoPosition)) $ throwError $ WrongMainType t
             unless (null argTypes) $ throwError $ WrongArgsNumber id (length argTypes) 0 (posFromType $ head argTypes)
 
-checkEveryTopFun :: [TopDef] -> TCMonad ()
-checkEveryTopFun fundefs = do
-    mapM_ funToEnv fundefs
+checkEveryTopDef :: [TopDef] -> TCMonad ()
+checkEveryTopDef topdefs = do
+    mapM_ topDefToEnv topdefs
     checkMain
-    (env, _, _, _) <- get
+    (env, _, _, _, _) <- get
     let initialEnv = M.union env $ M.fromList predefinedFuns
-    mapM_ (checkTopFun $ M.delete (Ident "main") initialEnv) fundefs
+    mapM_ (checkTopDef $ M.delete (Ident "main") initialEnv) topdefs
 
 check :: Program -> IO (String, Bool)
-check (Program _ fundefs) = do
-    let runS = runStateT (checkEveryTopFun fundefs) emptyState
+check (Program _ topdefs) = do
+    let runS = runStateT (checkEveryTopDef topdefs) emptyState
     result <- runExceptT runS
     case result of
         Left err -> return ("ERROR\n" ++ errMsg err, True)

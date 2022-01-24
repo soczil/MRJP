@@ -790,16 +790,6 @@ compileTopDef initialEnv (ClsDef _ (Ident id) flds) = do
     return $ constructor ++ concat result
 compileTopDef initialEnv (ClsDefExt p clsId _ flds) = 
     compileTopDef initialEnv (ClsDef p clsId flds)
-    -- (env, store, locCounter, regCounter, strCounter, lblCounter, label, globals, _) <- get
-    -- let (atrs, funs) = foldl (\(atrList, funList) fld -> case fld of
-    --         (ClsAtr p t id) -> (atrList ++ [ClsAtr p t id], funList)
-    --         fun -> (atrList, funList ++ [fun])) ([], []) flds
-    -- (_, _, compiledAtrs) <- getClassInf (Ident clsId)
-    -- let newGlobals = globals ++ printf "%%class.%s = type { %s }\n" clsId compiledAtrs
-    -- put (env, store, locCounter, regCounter, strCounter, lblCounter, label, newGlobals, clsId)
-    -- constructor <- compileConstructor initialEnv (Ident clsId)
-    -- result <- mapM (compileClsFun initialEnv (Ident clsId)) funs
-    -- return $ constructor ++ concat result
 
 predefinedFuns :: [(Ident, CMPInf)]
 predefinedFuns = [

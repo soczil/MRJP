@@ -19,6 +19,9 @@ data TCError = FunAlreadyDeclared Ident BNFC'Position
              | WrongMainType Type
              | WrongArrElemType Ident Type Type BNFC'Position
              | NotAnArray Ident BNFC'Position
+             | NotArrayAtr Ident BNFC'Position
+             | NotAClass Ident BNFC'Position
+             | FieldNotInClass Ident BNFC'Position
 
 errMsgPref :: BNFC'Position -> String
 errMsgPref p = case p of
@@ -34,6 +37,7 @@ showT (Str _) = "string"
 showT (Bool _) = "boolean"
 showT (Void _) = "void"
 showT (Array _ t) = showT t ++ "[]"
+showT (Class _ id) = "class " ++ showId id
 
 errMsg :: TCError -> String
 errMsg (FunAlreadyDeclared id p) = errMsgPref p ++
@@ -66,3 +70,9 @@ errMsg (WrongArrElemType id arrType elemType p) = errMsgPref p ++
     printf "array %s of type %s does not have elements of type %s" (showId id) (showT arrType) (showT elemType)
 errMsg (NotAnArray id p) = errMsgPref p ++
     printf "%s is not an array" (showId id)
+errMsg (NotArrayAtr id p) = errMsgPref p ++
+    printf "%s is not array atribute" (showId id)
+errMsg (NotAClass id p) = errMsgPref p ++
+    printf "%s is not a class" (showId id)
+errMsg (FieldNotInClass id p) = errMsgPref p ++
+    printf "%s is not a class field" (showId id)

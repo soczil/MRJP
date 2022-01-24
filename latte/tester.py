@@ -23,6 +23,14 @@ def check_output(file, dest):
     else:
         print('OKK')
 
+def clean(cond, dest):
+    if cond:
+        for file in os.listdir(dest):
+            if (file.endswith('.ll')
+                or file.endswith('.bc')
+                or file.endswith('.test')):
+                os.remove(dest + file)
+
 parser = argparse.ArgumentParser()
 parser.add_argument(
     '-d',
@@ -42,6 +50,11 @@ parser.add_argument(
     action='store_false'
 )
 parser.set_defaults(good=True)
+parser.add_argument(
+    '--extensions',
+    dest='ext',
+    action='store_true'
+)
 parser.add_argument(
     '--clean',
     dest='clean',
@@ -64,42 +77,62 @@ if args.good:
 else:
     dest = args.dir + 'bad/'
 
-input_files = []
-for file in os.listdir(dest):
-    if file.endswith('.lat'):
-        input_files.append(file)
+if args.ext:
+    folders = ['arrays1/', 'struct/', 'objects1/']
+    for folder in folders:
+        dest = args.dir + 'extensions/' + folder
+        input_files = []
+        for file in os.listdir(dest):
+            if file.endswith('.lat'):
+                input_files.append(file)
 
-input_files.sort()
-for file in input_files:
-    print(file[:-4], end=': ')
-    latc_file = dest + file
-    p = subprocess.run(['./latc_llvm', latc_file], capture_output=True)
-    if args.good:
-        if (p.returncode != 0 
-            or not p.stderr.decode().startswith('OK\n') 
-            or p.stdout.decode() != ''):
-            print('BAD')
-            bad += 1
-            print(p.returncode)
-            print(p.stderr.decode())
-        else:
-            check_output(latc_file, dest)
-    else:
-        if (p.returncode != 1
-            or not p.stderr.decode().startswith('ERROR\n')
-            or p.stdout.decode() != ''):
-            print('BAD')
-            bad += 1
-        else:
-            print('OKK')
-            # print(p.stderr.decode() + '\n')
-
-if args.clean:
+        input_files.sort()
+        print(folder[:-1].upper() + ':')
+        for file in input_files:
+            print(file[:-4], end=': ')
+            latc_file = dest + file
+            p = subprocess.run(['./latc_llvm', latc_file], capture_output=True)
+            if p.returncode != 0:
+                print('BAD')
+                bad += 1
+                print(p.returncode)
+                print(p.stderr.decode())
+            else:
+                check_output(latc_file, dest)
+        
+        clean(args.clean, dest)
+else:
+    input_files = []
     for file in os.listdir(dest):
-        if (file.endswith('.ll')
-            or file.endswith('.bc')
-            or file.endswith('.test')):
-            os.remove(dest + file)
+        if file.endswith('.lat'):
+            input_files.append(file)
+
+    input_files.sort()
+    for file in input_files:
+        print(file[:-4], end=': ')
+        latc_file = dest + file
+        p = subprocess.run(['./latc_llvm', latc_file], capture_output=True)
+        if args.good:
+            if (p.returncode != 0 
+                or not p.stderr.decode().startswith('OK\n') 
+                or p.stdout.decode() != ''):
+                print('BAD')
+                bad += 1
+                print(p.returncode)
+                print(p.stderr.decode())
+            else:
+                check_output(latc_file, dest)
+        else:
+            if (p.returncode != 1
+                or not p.stderr.decode().startswith('ERROR\n')
+                or p.stdout.decode() != ''):
+                print('BAD')
+                bad += 1
+            else:
+                print('OKK')
+                # print(p.stderr.decode() + '\n')
+
+        clean(args.clean, dest)
 
 if bad == 0:
     print('\n\n\n\nKLASUNIA SWIATOWA\n\n\n\n')

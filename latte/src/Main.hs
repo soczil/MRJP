@@ -27,8 +27,8 @@ runCompiler filePath = do
     latteProgram <- readFile filePath
     case pProgram (myLexer latteProgram) of
         Ok prog -> do
-            -- result <- check prog
-            -- finishTypechecker result
+            result <- check prog
+            finishTypechecker result
             compiledCode <- compile prog
             dir <- getCurrentDirectory
             let llFilePath = dropExtension filePath ++ ".ll"
